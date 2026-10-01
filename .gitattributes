@@ -1,0 +1,5 @@
+# Keep source contracts and frozen source hashes stable across Git clients.
+* text=auto eol=lf
+*.wasm -text
+*.trpkg -text
+*.bin -text

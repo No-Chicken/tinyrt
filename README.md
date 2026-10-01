@@ -1,0 +1,57 @@
+# TinyRT core
+
+TinyRT validates signed application packages, commits installations atomically,
+and executes bounded Wasm guests behind ABI 1. This repository contains the
+portable runtime, contracts and core tests. SDK authoring tools/examples and
+EEBadge board, BLE, UI and NVS adapters belong to their own repositories.
+
+## Build and test on Windows
+
+Use an x64 MSVC developer terminal and UTF-8 console (`chcp 65001`). Install
+CMake 3.24+, Ninja, Python 3.10+ and `pip install -r requirements-test.txt`.
+Fetch the locked dependency with `python scripts/fetch_wamr.py`, or supply an
+existing clean checkout of the exact revision in `dependencies.lock.json`.
+
+```sh
+cmake -S . -B build -G Ninja -DWAMR_ROOT_DIR=/path/to/wamr -DPython3_EXECUTABLE=/path/to/python
+cmake --build build
+ctest --test-dir build --output-on-failure
+```
+
+Without an override WAMR_ROOT_DIR is `third_party/wamr`. Configuration verifies
+both revision and cleanliness. There is no fallback to a machine-specific path.
+The full host suite currently uses Windows BCrypt; Linux is not validated and
+the root build rejects it explicitly. Store and manager test directories can
+also be configured separately. Firmware adapters may compile core C sources
+and use the PSA crypto backend, while binding all hardware operations themselves.
+
+## Host runtime integration
+
+For an SDK host harness, include `cmake/HostWamr.cmake` from a C/C++ CMake
+project after setting WAMR_ROOT_DIR. It exposes `tinyrt_wamr` and
+`tinyrt_runtime`; link the latter for public headers and runtime dependencies.
+The root `tinyrt-run` executable validates raw Wasm and accepts bounded stdin
+events. Its output is host validation, not package trust or device acceptance.
+
+## Repository boundaries
+
+`contracts/guest-v1.h` and JSON contracts are authoritative. The SDK generates
+copies from these contracts. `runtime/` owns package/store/manager/Wasm behavior;
+`protocol/` owns portable management framing; `specs/` documents wire formats.
+Core tests use independent signed encoders and frozen C/Wasm regression guests,
+so building this checkout does not require the SDK, EEBadge or ESP-IDF.
+Product-side tests moved to EEBadge `esp32/tests/tinyrt`.
+
+Current storage is an immutable package store plus sixteen i32 values per app.
+Package assets fields exist but there is no guest resource-read API or private
+file filesystem yet. Two apps and 296 KiB complete packages are current limits.
+Guest host calls are bounded RAM work; the owning service persists successful
+transactions outside guest execution. Physical NVS, BLE and device display
+acceptance remain product tests; host success does not establish hardware safety.
+
+## Source provenance
+
+This extraction preserves the original source and notices without assigning a
+new project license. WAMR is obtained separately at a fixed revision and retains
+its upstream license. Test signing scalars 1 and 42 are public test fixtures;
+they must never be trusted by production devices. No production keys are stored.

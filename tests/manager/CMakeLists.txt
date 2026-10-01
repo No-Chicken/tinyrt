@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+project(tinyrt_manager_tests C)
+enable_testing()
+set(CMAKE_C_STANDARD 11)
+add_executable(test_manager test_manager.c boundaries.c ../store/fake_nor.c ../store/test_package_verifier.c
+    ../../runtime/manager/tinyrt_manager.c ../../runtime/store/tinyrt_store.c ../../runtime/store/tinyrt_directory.c)
+target_include_directories(test_manager PRIVATE ../../runtime/include ../store)
+if(MSVC)
+ target_compile_options(test_manager PRIVATE /W4 /WX /utf-8)
+else()
+ target_compile_options(test_manager PRIVATE -Wall -Wextra -Werror)
+endif()
+add_test(NAME manager COMMAND test_manager)

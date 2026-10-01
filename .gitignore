@@ -1,0 +1,15 @@
+/build*/
+/third_party/wamr/
+**/build*/
+**/__pycache__/
+*.pyc
+*.log
+*.obj
+*.exe
+*.lib
+*.pdb
+*.ilk
+*.exp
+*.pem
+/tests/package/fixtures/
+/tests/runtime/fixtures/

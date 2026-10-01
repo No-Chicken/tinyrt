@@ -1,0 +1,65 @@
+{
+  "format_version": 1,
+  "headers": {
+    "runtime/include/tinyrt_package.h": {
+      "TINYRT_PACKAGE_HEADER_SIZE": 256,
+      "TINYRT_PACKAGE_ABI_VERSION": 1,
+      "TINYRT_PERMISSION_DRAW": 1,
+      "TINYRT_PERMISSION_INPUT": 2,
+      "TINYRT_PERMISSION_STORAGE": 4,
+      "TINYRT_PERMISSION_CLOCK": 8,
+      "TINYRT_PERMISSION_ALL": 15
+    },
+    "runtime/include/tinyrt_store.h": {
+      "TINYRT_STORE_SIZE": 917504,
+      "TINYRT_STORE_SECTOR_SIZE": 4096,
+      "TINYRT_STORE_SLOT_SIZE": 303104,
+      "TINYRT_STORE_SLOT_COUNT": 3,
+      "TINYRT_STORE_MAX_APPS": 2
+    },
+    "protocol/tinyrt_transport.h": {
+      "TINYRT_MGMT_VERSION": 1,
+      "TINYRT_MGMT_MAX_MESSAGE": 256,
+      "TINYRT_MGMT_FRAME_SIZE": 20,
+      "TINYRT_MGMT_HEADER_SIZE": 10,
+      "TINYRT_OP_HELLO": 16,
+      "TINYRT_OP_LIST": 17,
+      "TINYRT_OP_QUERY": 18,
+      "TINYRT_OP_PREPARE": 19,
+      "TINYRT_OP_UNINSTALL": 20,
+      "TINYRT_OP_LAUNCH": 21,
+      "TINYRT_OP_STOP": 22
+    }
+  },
+  "package": {
+    "magic": "TRPKG001",
+    "signature_domain_hex": "54696e7952542d7061636b6167652d763100",
+    "header_size": 256,
+    "offsets": {
+      "format_version": 8,
+      "header_size": 10,
+      "total_size": 12,
+      "wasm_offset": 16,
+      "wasm_size": 20,
+      "assets_offset": 24,
+      "assets_size": 28,
+      "app_version": 32,
+      "abi_version": 36,
+      "permissions": 40,
+      "memory_pages": 44,
+      "instruction_budget": 48,
+      "key_id": 52,
+      "app_id": 56,
+      "title": 88,
+      "payload_sha256": 152,
+      "signature": 192
+    }
+  },
+  "management": {
+    "magic": 167,
+    "version": 1,
+    "header_size": 10,
+    "frame_size": 20,
+    "max_message": 256
+  }
+}

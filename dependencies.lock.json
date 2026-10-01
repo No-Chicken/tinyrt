@@ -1,0 +1,16 @@
+{
+  "wamr": {
+    "repository": "https://github.com/bytecodealliance/wasm-micro-runtime.git",
+    "revision": "25bd7eb63e828e4bd242cc9b38d260b4b31c6605",
+    "version": "2.4.5",
+    "directory": "third_party/wamr",
+    "license": "Apache-2.0 WITH LLVM-exception; see upstream LICENSE"
+  },
+  "host_tests": {
+    "python": "3.10+",
+    "cryptography": ">=43",
+    "cmake": ">=3.24",
+    "compiler": "Windows x64 MSVC (verified with Visual Studio 18)",
+    "frozen_guests_compiler": "Zig 0.13.0"
+  }
+}

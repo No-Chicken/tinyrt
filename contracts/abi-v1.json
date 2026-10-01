@@ -1,0 +1,58 @@
+{
+  "abi_version": 1,
+  "module": "tinyrt",
+  "imports": [
+    {
+      "name": "draw_clear",
+      "signature": "(i)i",
+      "permission": 1
+    },
+    {
+      "name": "draw_rect",
+      "signature": "(iiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "draw_text",
+      "signature": "(iiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "kv_get",
+      "signature": "(ii)i",
+      "permission": 4
+    },
+    {
+      "name": "kv_set",
+      "signature": "(ii)i",
+      "permission": 4
+    },
+    {
+      "name": "now_ms",
+      "signature": "()i",
+      "permission": 8
+    }
+  ],
+  "exports": [
+    {
+      "name": "tinyrt_init",
+      "arity": 2
+    },
+    {
+      "name": "tinyrt_event",
+      "arity": 4
+    },
+    {
+      "name": "tinyrt_render",
+      "arity": 0
+    }
+  ],
+  "events": {
+    "TINYRT_TOUCH_RELEASE": 1,
+    "TINYRT_CLOCK_EVENT": 2
+  },
+  "storage": {
+    "keys": 16,
+    "value": "i32"
+  }
+}

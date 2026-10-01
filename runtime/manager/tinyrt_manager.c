@@ -18,7 +18,8 @@ struct tinyrt_manager {
     int32_t durable_values[16];
     bool save_attempted;
     tinyrt_frame_t frame;
-    tinyrt_package_metadata_t catalog[2];
+    tinyrt_package_metadata_t catalog[TINYRT_STORE_MAX_APPS];
+    tinyrt_app_info_t scratch[TINYRT_STORE_MAX_APPS]; /* Single-owner heap workspace. */
     uint32_t catalog_count;
     bool catalog_valid;
     char error[128];
@@ -123,15 +124,15 @@ void tinyrt_manager_close(tinyrt_manager_t *m) {
     tinyrt_store_close(m->store);
     free(m);
 }
-tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *m, tinyrt_package_metadata_t out[2], uint32_t *count) {
+tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *m, tinyrt_package_metadata_t out[TINYRT_STORE_MAX_APPS], uint32_t *count) {
     if (!m || !out || !count)
         return TINYRT_INVALID_ARGUMENT;
     *count = 0;
     if (m->install)
         return TINYRT_BUSY;
-    tinyrt_app_info_t apps[2];
+    tinyrt_app_info_t *apps=m->scratch;
     uint32_t n = 0;
-    tinyrt_status_t r = tinyrt_store_list(m->store, apps, 2, &n);
+    tinyrt_status_t r = tinyrt_store_list(m->store, apps, TINYRT_STORE_MAX_APPS, &n);
     if (m->runtime) {
         /* Every cached entry was fully verified before this instance started.
          * A live WAMR instance prevents another module validation. Match the
@@ -170,7 +171,7 @@ tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *m, tinyrt_package_metadata
         }
         if (r == TINYRT_OK) {
             n = healthy;
-            memcpy(m->catalog, out, n * sizeof(*out));
+            if(out!=m->catalog) memcpy(m->catalog, out, n * sizeof(*out));
             m->catalog_count = n;
             m->catalog_valid = true;
         }
@@ -183,31 +184,31 @@ tinyrt_status_t tinyrt_manager_query(tinyrt_manager_t *m, const tinyrt_package_i
                                      tinyrt_app_info_t *out) {
     return m ? tinyrt_store_query(m->store, id, out) : TINYRT_INVALID_ARGUMENT;
 }
-tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *m, tinyrt_app_info_t out[2], uint32_t *count) {
+tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *m, tinyrt_app_info_t out[TINYRT_STORE_MAX_APPS], uint32_t *count) {
     if (!m || !out || !count)
         return TINYRT_INVALID_ARGUMENT;
     *count = 0;
     if (m->install)
         return TINYRT_BUSY;
-    return tinyrt_store_list_quarantined(m->store, out, 2, count);
+    return tinyrt_store_list_quarantined(m->store, out, TINYRT_STORE_MAX_APPS, count);
 }
 tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_t *a) {
-    if (!m || !a || !a->package_size || a->package_size > TINYRT_STORE_SLOT_SIZE)
+    if (!m || !a || !a->package_size || a->package_size > TINYRT_STORE_MAX_PACKAGE_SIZE)
         return TINYRT_INVALID_ARGUMENT;
     if (m->install)
         return TINYRT_BUSY;
-    tinyrt_app_info_t found, apps[2];
+    tinyrt_app_info_t found, *apps=m->scratch;
     uint32_t count = 0;
     tinyrt_status_t r = tinyrt_store_query(m->store, &a->id, &found);
     if (r == TINYRT_OK)
         return found.package_size == a->package_size ? TINYRT_ALREADY_INSTALLED : TINYRT_CONFLICT;
     if (r != TINYRT_NOT_FOUND && r != TINYRT_VERIFY_FAILED)
         return r;
-    r = tinyrt_store_list(m->store, apps, 2, &count);
+    r = tinyrt_store_list(m->store, apps, TINYRT_STORE_MAX_APPS, &count);
     if (r != TINYRT_OK)
         return r;
     uint32_t healthy_count = count, quarantined_count = 0;
-    r = tinyrt_store_list_quarantined(m->store, apps + count, 2 - count, &quarantined_count);
+    r = tinyrt_store_list_quarantined(m->store, apps + count, TINYRT_STORE_MAX_APPS - count, &quarantined_count);
     if (r != TINYRT_OK)
         return r;
     count += quarantined_count;
@@ -220,7 +221,7 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
                 return TINYRT_CONFLICT;
             update = true;
         }
-    if (!update && count >= 2)
+    if (!update && count >= TINYRT_STORE_MAX_APPS)
         return TINYRT_NO_SPACE;
     r = tinyrt_manager_stop(m);
     if (r != TINYRT_OK)
@@ -261,8 +262,8 @@ tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *m, const tinyrt_packa
     tinyrt_app_info_t a;
     tinyrt_status_t r = tinyrt_store_query(m->store, id, &a);
     if (r == TINYRT_VERIFY_FAILED) {
-        tinyrt_app_info_t quarantined[2];uint32_t count = 0;
-        r = tinyrt_store_list_quarantined(m->store, quarantined, 2, &count);
+        tinyrt_app_info_t *quarantined=m->scratch;uint32_t count = 0;
+        r = tinyrt_store_list_quarantined(m->store, quarantined, TINYRT_STORE_MAX_APPS, &count);
         if (r != TINYRT_OK)
             return r;
         r = TINYRT_NOT_FOUND;
@@ -314,7 +315,8 @@ static tinyrt_status_t finish_call(tinyrt_manager_t *m, tinyrt_frame_t *out) {
         r = persist(m, false);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
-    *out = m->frame;
+    if(m->frame.count) *out=m->frame;
+    else out->count=0; /* A successful skip retains display without a large copy. */
     return TINYRT_OK;
 }
 tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_id_t *id, int32_t width,
@@ -331,7 +333,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (r != TINYRT_OK)
         return r;
     m->error[0] = 0;
-    tinyrt_package_metadata_t all[2], meta = {0};
+    tinyrt_package_metadata_t *all=m->catalog, meta = {0};
     uint32_t count = 0;
     r = tinyrt_manager_list(m, all, &count);
     if (r != TINYRT_OK)
@@ -383,4 +385,25 @@ tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t 
 }
 const char *tinyrt_manager_error(const tinyrt_manager_t *m) {
     return m ? m->error : "invalid manager";
+}
+
+tinyrt_status_t tinyrt_manager_generation(tinyrt_manager_t *m,uint64_t *out) {
+    if(!out) return TINYRT_INVALID_ARGUMENT;
+    *out=0;
+    return m ? tinyrt_store_generation(m->store,out) : TINYRT_INVALID_ARGUMENT;
+}
+
+tinyrt_status_t tinyrt_manager_stats(tinyrt_manager_t *m,tinyrt_store_stats_t *out) {
+    return tinyrt_store_stats(m?m->store:NULL,out);
+}
+
+uint32_t tinyrt_manager_clock_interval_ms(const tinyrt_manager_t *m) {
+    return tinyrt_runtime_clock_interval_ms(m?m->runtime:NULL);
+}
+
+size_t tinyrt_manager_memory_used(const tinyrt_manager_t *m) {
+    return m?tinyrt_runtime_memory_used():0;
+}
+size_t tinyrt_manager_memory_peak(const tinyrt_manager_t *m) {
+    return m?tinyrt_runtime_memory_peak():0;
 }

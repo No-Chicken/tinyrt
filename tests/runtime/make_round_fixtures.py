@@ -3,7 +3,7 @@ from pathlib import Path
 from make_fixtures import u, s, sec, c, call
 
 
-def guest(imports, render, stop=None, *, init=None, event=None, payload=b"TEXT", stop_type=0, stop_kind=0):
+def guest(imports, render, stop=None, *, init=None, event=None, payload=b"TEXT", stop_type=0, stop_kind=0, memory_pages=1):
     counts = [0, 1, 2, 4, 5, 6, 7, 9]
     types = u(len(counts)) + b"".join(b"\x60" + u(n) + b"\x7f" * n + b"\x01\x7f" for n in counts)
     imp = u(len(imports)) + b"".join(s("tinyrt") + s(name) + b"\0" + u(counts.index(n)) for name, n in imports)
@@ -18,7 +18,7 @@ def guest(imports, render, stop=None, *, init=None, event=None, payload=b"TEXT",
     body = lambda b: u(len(b) + 2) + b"\0" + b + b"\x0b"
     return (b"\0asm\1\0\0\0" + sec(1, types) + sec(2, imp)
             + sec(3, u(len(indices)) + b"".join(u(i) for i in indices))
-            + sec(5, b"\1\1\1\2") + sec(7, ex)
+            + sec(5, b"\1\1" + u(memory_pages) + b"\2") + sec(7, ex)
             + sec(10, u(len(bodies)) + b"".join(body(b) for b in bodies))
             + sec(11, b"\1\0" + c(0) + b"\x0b" + u(len(payload)) + payload))
 

@@ -49,7 +49,7 @@ Existing guests remain valid; new guests require a core revision supporting
 their imports, pinned by the SDK contract snapshot. Unknown imports remain a
 preflight rejection on older hosts. All drawing stays render-only, requires
 DRAW permission, copies values/text, and shares the 128-command limit. The
-expanded host frame is 14,340 bytes (previously 11,268); embedding products must
+host frame including the pixel extension is 137,224 bytes; embedding products must
 budget for every frame copy. The core does not render pixels or choose fonts.
 Text boxes are single-line, clipped and vertically centered, with font sizes
 18/24/36/48 and left/center/right alignment. See the authoritative guest header
@@ -72,9 +72,24 @@ RAM-only and rolls back on a failed stop. JSON frames include the new style
 fields. Runtime and signed integration tests execute optional-stop fixtures
 on the real pinned WAMR, including budget traps and storage failure injection.
 
+`draw_rgb565` adds one owned RGB565 little-endian image up to 256×240 per frame.
+The host copies bytes during render after validating dimensions, viewport,
+length and guest memory. `draw_skip` is a sole render operation that keeps the
+previous display; a successful skipped output changes only `count` to zero.
+Consumers must ignore every other output field in that case. `clock_interval`
+allows init/event to request 1..1000 ms scheduling under CLOCK permission,
+default 100 ms. The host schedules a single callback after the previous one
+completes. No catch-up loop or instruction budget increase is implied. See
+[graphics and scheduling](specs/graphics-scheduling-v1.md). The runner reports
+pixel byte count/CRC32 and clock interval; it does not emit raw image bytes.
+
 Current storage is an immutable package store plus sixteen i32 values per app.
 Package assets fields exist but there is no guest resource-read API or private
-file filesystem yet. Two apps and 296 KiB complete packages are current limits.
+file filesystem yet. The store supports 16 apps and 2 MiB complete packages in
+0x4E0000 bytes, with two 4 KiB directory sectors and variable contiguous extents.
+Updates require separate free staging space; fragmentation or insufficient
+space returns NO_SPACE while preserving the committed version. See
+[store v2](specs/store-v2.md) for the incompatible media format and paging token.
 Guest host calls are bounded RAM work; the owning service persists successful
 transactions outside guest execution. Physical NVS, BLE and device display
 acceptance remain product tests; host success does not establish hardware safety.
@@ -100,7 +115,7 @@ millisecond clock and transactional storage. See [host protection semantics](spe
 Store recovery first selects the newest structurally valid committed directory,
 then quarantines invalid packages individually without writing media. Healthy
 apps remain available. Quarantine keeps the original identity, version floor,
-capacity usage and slot reservation. Hosts can list quarantined identities,
+capacity usage and extent reservation. Hosts can list quarantined identities,
 repair with the exact original package, replace with a higher version, or
 uninstall. IO/resource/configuration failures are returned rather than treated
 as corruption. A damaged package never causes directory rollback; damaged

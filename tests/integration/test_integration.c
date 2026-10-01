@@ -47,7 +47,7 @@ static size_t read_file(const char *path,void *out,size_t capacity) {
     size_t n=fread(out,1,capacity,f); CHECK(!ferror(f) && fgetc(f)==EOF); fclose(f); return n;
 }
 static uint32_t get32(const uint8_t *b) {return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24);}
-static uint8_t package[TINYRT_STORE_SLOT_SIZE+1];
+static uint8_t package[TINYRT_STORE_MAX_PACKAGE_SIZE+1];
 static tinyrt_app_info_t load_package(const char *dir,const char *name,uint32_t *size) {
     char path[1024]; snprintf(path,sizeof(path),"%s/%s.trpkg",dir,name);
     *size=(uint32_t)read_file(path,package,sizeof(package));
@@ -83,8 +83,7 @@ static tinyrt_manager_t *reboot(tinyrt_manager_t *m) {
 }
 static void corrupt_package(const char *dir,const char *name,uint32_t byte) {
     uint32_t size;(void)load_package(dir,name,&size);
-    for(uint32_t i=0;i<TINYRT_STORE_SLOT_COUNT;++i) {
-        uint32_t off=2*TINYRT_STORE_SECTOR_SIZE+i*TINYRT_STORE_SLOT_SIZE;
+    for(uint32_t off=2*TINYRT_STORE_SECTOR_SIZE;off<=TINYRT_STORE_SIZE-size;off+=TINYRT_STORE_SECTOR_SIZE) {
         if(!memcmp(nor.bytes+off,package,size)) {
             CHECK(byte<size);nor.bytes[off+byte]^=1;return;
         }
@@ -108,7 +107,7 @@ int main(int argc,char **argv) {
     counter_frame("COUNTER V1","1",0x181818);
     CHECK(kv->mask==1 && kv->values[0]==1 && saves==1);
     /* Listing/querying a running app must not seize a second WAMR instance. */
-    tinyrt_package_metadata_t listed[2]; uint32_t count=0;
+    tinyrt_package_metadata_t listed[TINYRT_STORE_MAX_APPS]; uint32_t count=0;
     tinyrt_status_t list_status=tinyrt_manager_list(m,listed,&count);
     if(list_status!=TINYRT_OK) fprintf(stderr,"live list status=%d\n",list_status);
     CHECK(list_status==TINYRT_OK && count==1 && listed[0].app.id.version==1);
@@ -211,7 +210,7 @@ int main(int argc,char **argv) {
     CHECK(nor.mutations==mutations_before);
     CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK&&count==1);
     CHECK(!strcmp(listed[0].app.id.app_id,"demo.counter"));
-    tinyrt_app_info_t quarantined[2];
+    tinyrt_app_info_t quarantined[TINYRT_STORE_MAX_APPS];
     CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK&&count==1);
     CHECK(!memcmp(&quarantined[0].id,&stop.id,sizeof(stop.id)));
     memset(&found,0xa5,sizeof(found));
@@ -262,7 +261,36 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_store_list(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==1);
     CHECK(tinyrt_store_list_quarantined(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==0);
     CHECK(nor.mutations==unavailable_mutations);
-    tinyrt_store_close(healthy_store);tinyrt_runtime_system_shutdown();
+    tinyrt_store_close(healthy_store);
+    /* The signed limit includes assets; only its real Wasm section becomes
+     * guest memory. Exercise the whole maximum-size store/manager path. */
+    fake_nor_init(&nor);memset(records,0,sizeof(records));
+    m=open_manager();
+    tinyrt_app_info_t maximum=install(m,argv[1],"counter-maximum",TINYRT_OK);
+    CHECK(maximum.package_size==0x200000);
+    CHECK(tinyrt_manager_start(m,&maximum.id,466,466,&frame)==TINYRT_OK);
+    counter_frame("COUNTER V1","0",0x181818);
+    CHECK(tinyrt_manager_event(m,1,40,40,0,&frame)==TINYRT_OK);
+    counter_frame("COUNTER V1","1",0x181818);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+    m=reboot(m);
+    CHECK(tinyrt_manager_query(m,&maximum.id,&found)==TINYRT_OK&&found.package_size==0x200000);
+    CHECK(tinyrt_manager_start(m,&maximum.id,466,466,&frame)==TINYRT_OK);
+    counter_frame("COUNTER V1","1",0x181818);
+    tinyrt_manager_close(m);
+    fake_nor_init(&nor);memset(records,0,sizeof(records));m=open_manager();
+    CHECK(tinyrt_manager_clock_interval_ms(m)==100);
+    tinyrt_app_info_t pixels=install(m,argv[1],"pixel_then_skip",TINYRT_OK);
+    CHECK(tinyrt_manager_start(m,&pixels.id,466,466,&frame)==TINYRT_OK&&frame.pixel_bytes==8);
+    CHECK(frame.count==2&&frame.commands[1].kind==TINYRT_DRAW_RGB565&&frame.pixels[1]==0xf8);
+    memset(&frame,0xa5,sizeof(frame));previous=frame;previous.count=0;
+    CHECK(tinyrt_manager_event(m,2,0,0,0,&frame)==TINYRT_OK&&!memcmp(&frame,&previous,sizeof(frame)));
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+    tinyrt_app_info_t clock=install(m,argv[1],"clock_valid",TINYRT_OK);
+    CHECK(tinyrt_manager_start(m,&clock.id,466,466,&frame)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==1);
+    CHECK(tinyrt_manager_event(m,2,0,0,1000,&frame)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==1000);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==100);
+    tinyrt_manager_close(m);tinyrt_runtime_system_shutdown();
     CHECK(tinyrt_runtime_memory_used()==0);
     printf("INTEGRATION checks=%u PASS (real SHA256/P256/store/manager/WAMR; simulated NOR/KV)\n",checks);
     return 0;

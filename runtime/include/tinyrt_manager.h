@@ -14,10 +14,18 @@ typedef struct {
  * on this owner thread; close manager before shutting down the runtime. */
 tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *,const tinyrt_package_verifier_t *,const tinyrt_manager_storage_t *,tinyrt_manager_t **);
 void tinyrt_manager_close(tinyrt_manager_t *);
-tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *,tinyrt_package_metadata_t out[2],uint32_t *count);
+/* Opaque inventory revision; same semantics as tinyrt_store_generation. */
+tinyrt_status_t tinyrt_manager_generation(tinyrt_manager_t *,uint64_t *);
+tinyrt_status_t tinyrt_manager_stats(tinyrt_manager_t *,tinyrt_store_stats_t *);
+uint32_t tinyrt_manager_clock_interval_ms(const tinyrt_manager_t *);
+/* Runtime allocator telemetry (not the separately allocated manager/store).
+ * NULL returns zero. Limit is TINYRT_RUNTIME_HEAP_LIMIT. */
+size_t tinyrt_manager_memory_used(const tinyrt_manager_t *);
+size_t tinyrt_manager_memory_peak(const tinyrt_manager_t *);
+tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *,tinyrt_package_metadata_t out[TINYRT_STORE_MAX_APPS],uint32_t *count);
 /* Diagnostic committed identities, never runnable metadata. Uninstall accepts
  * these exact identities; begin permits identical-package repair or an upgrade. */
-tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *,tinyrt_app_info_t out[2],uint32_t *count);
+tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *,tinyrt_app_info_t out[TINYRT_STORE_MAX_APPS],uint32_t *count);
 tinyrt_status_t tinyrt_manager_query(tinyrt_manager_t *,const tinyrt_package_id_t *,tinyrt_app_info_t *);
 tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *,const tinyrt_app_info_t *);
 tinyrt_status_t tinyrt_manager_write(tinyrt_manager_t *,const void *,uint32_t size);

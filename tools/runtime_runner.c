@@ -14,6 +14,7 @@
 typedef struct { uint32_t mask; int32_t values[16]; } saved_t;
 static saved_t saved;
 static uint32_t now_ms_value, commits;
+static uint32_t clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 static tinyrt_frame_t frame;
 static double milliseconds(void) {
 #ifdef _WIN32
@@ -43,6 +44,12 @@ static void json_string(const char *s) {
     }
     putchar('"');
 }
+static uint32_t pixel_crc32(const uint8_t *bytes,uint32_t size) {
+    uint32_t value=UINT32_MAX;
+    for(uint32_t i=0;i<size;++i){value^=bytes[i];
+        for(unsigned j=0;j<8;++j)value=(value>>1)^(UINT32_C(0xedb88320)&(0u-(value&1u)));}
+    return ~value;
+}
 static void emit(const char *phase, tinyrt_status_t status, const char *error, double elapsed) {
     printf("{\"phase\":"); json_string(phase);
     printf(",\"status\":%d,\"now_ms\":%" PRIu32 ",\"commits\":%" PRIu32
@@ -53,7 +60,9 @@ static void emit(const char *phase, tinyrt_status_t status, const char *error, d
         if (k) putchar(',');
         if (saved.mask & (1u << k)) printf("%" PRId32,saved.values[k]); else printf("null");
     }
-    printf("],\"frame\":[");
+    uint32_t pixel_bytes=status==TINYRT_OK && strcmp(phase,"shutdown") && frame.count ? frame.pixel_bytes:0;
+    printf("],\"clock_interval_ms\":%" PRIu32 ",\"pixel_bytes\":%" PRIu32
+        ",\"pixel_crc32\":%" PRIu32 ",\"frame\":[",clock_interval_value,pixel_bytes,pixel_crc32(frame.pixels,pixel_bytes));
     if (status==TINYRT_OK && strcmp(phase,"shutdown")) {
         for (uint32_t k=0;k<frame.count;++k) {
             const tinyrt_draw_command_t *c=&frame.commands[k];
@@ -84,6 +93,7 @@ static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
     if (result==TINYRT_OK) result=tinyrt_runtime_render(rt,&frame);
     if (result!=TINYRT_OK) saved=before;
     else if (memcmp(&saved,&before,sizeof(saved))) ++commits;
+    clock_interval_value=tinyrt_runtime_clock_interval_ms(rt);
     emit(phase,result,result==TINYRT_OK ? "" : tinyrt_runtime_last_error(rt),milliseconds()-start);
     return result;
 }
@@ -95,6 +105,7 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
         snprintf(error,sizeof(error),"%s",tinyrt_runtime_last_error(*rt));
     } else if (memcmp(&saved,&before,sizeof(saved))) ++commits;
     tinyrt_runtime_destroy(*rt); *rt=NULL; frame.count=0;
+    clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
     if (phase || result!=TINYRT_OK) emit(phase ? phase : "stop",result,error,milliseconds()-start);
     return result;
 }
@@ -119,7 +130,7 @@ int main(int argc, char **argv) {
     if (!f) { fprintf(stderr,"Cannot open Wasm file\n"); return 2; }
     if (fseek(f,0,SEEK_END)) { fclose(f); return 2; }
     long length=ftell(f);
-    if (length<8 || length>0x4A000 || fseek(f,0,SEEK_SET)) { fclose(f); return 2; }
+    if (length<8 || length>TINYRT_STORE_MAX_PACKAGE_SIZE || fseek(f,0,SEEK_SET)) { fclose(f); return 2; }
     unsigned char *bytes=malloc((size_t)length);
     if (!bytes) { fclose(f); return 2; }
     size_t count=fread(bytes,1,(size_t)length,f); int close_result=fclose(f);

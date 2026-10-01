@@ -2,14 +2,15 @@
 #define TINYRT_STORE_INTERNAL_H
 #include "tinyrt_store.h"
 #include <stdbool.h>
-/* Health is derived on recovery, never serialized into TRDIR001. */
-typedef struct { tinyrt_app_info_t app; uint32_t slot; bool quarantined; } tr_record_t;
-typedef struct { uint64_t generation; uint32_t count; tr_record_t records[2]; } tr_directory_t;
+/* Health is derived on recovery, never serialized into TRDIR002. */
+typedef struct { tinyrt_app_info_t app; uint32_t offset; bool quarantined; } tr_record_t;
+typedef struct { uint64_t generation; uint32_t count; tr_record_t records[TINYRT_STORE_MAX_APPS]; } tr_directory_t;
 struct tinyrt_store {
     tinyrt_store_io_t io;
     tinyrt_package_verify_fn verify;
     void *verify_ctx;
     tr_directory_t directory;
+    uint64_t revision;
     int active_sector; /* -1: erased or interrupted initial provisioning */
     bool dirty;
     tinyrt_install_t *install;
@@ -17,10 +18,10 @@ struct tinyrt_store {
 struct tinyrt_install {
     tinyrt_store_t *store;
     tinyrt_app_info_t expected;
-    uint32_t slot, received;
+    uint32_t offset, received;
     bool committed, failed;
 };
-uint32_t tr_slot_offset(uint32_t slot);
+uint32_t tr_extent_size(uint32_t size);
 bool tr_id_valid(const char *id);
 bool tr_identity_equal(const tinyrt_package_id_t *a,const tinyrt_package_id_t *b);
 bool tr_app_equal(const tinyrt_app_info_t *a,const tinyrt_app_info_t *b);

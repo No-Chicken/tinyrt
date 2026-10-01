@@ -11,6 +11,7 @@ from reference_package import encode
 sys.path.insert(0,str(ROOT/"tests/runtime"))
 from make_fixtures import module
 from make_round_fixtures import fixtures as round_fixtures
+from make_pixel_fixtures import fixtures as pixel_fixtures
 def u(n):
     out=bytearray()
     while n>=128: out.append((n&127)|128); n>>=7
@@ -49,6 +50,10 @@ def main(folder):
           ("counter-error",error,"demo.counter",3),
           ("invalid-wasm",unknown,"demo.invalid",1)]
     rounds=round_fixtures()
+    pixels=pixel_fixtures()
+    for name in ("pixel_then_skip","clock_valid"):
+        wasm=folder/(name+".wasm");wasm.write_bytes(pixels[name])
+        jobs.append((name,wasm,"demo.pixels" if name=="pixel_then_skip" else "demo.clock",1))
     repair=folder/"stop_repair.wasm";repair.write_bytes(rounds["stop_valid"])
     jobs.append(("stop_repair",repair,"demo.stop",6))
     for version,name in enumerate(("stop_valid","stop_failure","stop_trap","stop_spin","stop_bad_signature"),1):
@@ -64,7 +69,12 @@ def main(folder):
     output.write_bytes(encode((ROOT/"tests/fixtures/guests/counter-v2.wasm").read_bytes(),
                              app_id="demo.counter",title="Foreign publisher",version=3,key_id=2,test_scalar=2))
     identity(output)
+    wasm=(ROOT/"tests/fixtures/guests/counter-v1.wasm").read_bytes()
+    output=folder/"counter-maximum.trpkg"
+    output.write_bytes(encode(wasm,app_id="demo.maximum",title="Maximum package",version=1,
+                             assets=b"\xa5"*(0x200000-256-len(wasm))))
+    identity(output)
     (folder/"publisher2.bin").write_bytes(ec.derive_private_key(2,ec.SECP256R1()).public_key().public_bytes(
         serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))
-    print(f"INTEGRATION fixtures={len(jobs)+2} real P256 packages; public test key_ids=1,2")
+    print(f"INTEGRATION fixtures={len(jobs)+3} real P256 packages; public test key_ids=1,2")
 if __name__=="__main__": main(Path(sys.argv[1]))

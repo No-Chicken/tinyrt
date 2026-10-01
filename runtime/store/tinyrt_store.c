@@ -22,7 +22,11 @@ static tinyrt_status_t list_health(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32
     if(n<*count) return TINYRT_NO_SPACE;
     for(uint32_t i=0,j=0;i<s->directory.count;++i)
         if(s->directory.records[i].quarantined==quarantined) a[j++]=s->directory.records[i].app;
-    if(*count==2&&strcmp(a[0].id.app_id,a[1].id.app_id)>0) {tinyrt_app_info_t t=a[0];a[0]=a[1];a[1]=t;}
+    for(uint32_t i=1;i<*count;++i) {
+        tinyrt_app_info_t value=a[i];uint32_t j=i;
+        while(j && strcmp(a[j-1].id.app_id,value.id.app_id)>0) {a[j]=a[j-1];--j;}
+        a[j]=value;
+    }
     return TINYRT_OK;
 }
 tinyrt_status_t tinyrt_store_list(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32_t n,uint32_t *count) {
@@ -52,11 +56,14 @@ tinyrt_status_t tinyrt_store_recheck(tinyrt_store_t *s,const tinyrt_package_id_t
         tr_record_t *record=&s->directory.records[i];
         if(!tr_identity_equal(id,&record->app.id)) continue;
         tinyrt_app_info_t actual={0};
-        tinyrt_status_t r=s->verify(s->verify_ctx,&s->io,tr_slot_offset(record->slot),record->app.package_size,&actual);
+        tinyrt_status_t r=s->verify(s->verify_ctx,&s->io,record->offset,record->app.package_size,&actual);
         if(r==TINYRT_OK && (!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&record->app)))
             r=TINYRT_VERIFY_FAILED;
         if(r==TINYRT_CORRUPT) r=TINYRT_VERIFY_FAILED;
-        if(r==TINYRT_OK||r==TINYRT_VERIFY_FAILED) record->quarantined=r!=TINYRT_OK;
+        if((r==TINYRT_OK||r==TINYRT_VERIFY_FAILED) && record->quarantined!=(r!=TINYRT_OK)) {
+            if(s->revision==UINT64_MAX) return TINYRT_CONFLICT;
+            record->quarantined=r!=TINYRT_OK;++s->revision;
+        }
         return r;
     }
     return TINYRT_NOT_FOUND;
@@ -96,7 +103,7 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
     if(!out) return TINYRT_INVALID_ARGUMENT;
     *out=NULL;
     if(!s||!a||!tr_id_valid(a->id.app_id)||!a->id.version||
-       !a->package_size||a->package_size>TINYRT_STORE_SLOT_SIZE) return TINYRT_INVALID_ARGUMENT;
+       !a->package_size||a->package_size>TINYRT_STORE_MAX_PACKAGE_SIZE) return TINYRT_INVALID_ARGUMENT;
     if(s->install) return TINYRT_BUSY;
     tinyrt_status_t r=tr_recover(s);
     if(r!=TINYRT_OK) return r;
@@ -106,8 +113,8 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
         if(tr_app_equal(old,a)) {
             if(!s->directory.records[index].quarantined) return TINYRT_ALREADY_INSTALLED;
         } else if(a->id.version<=old->id.version) return TINYRT_CONFLICT;
-    } else if(s->directory.count>=2) return TINYRT_NO_SPACE;
-    if(s->directory.generation==UINT64_MAX) return TINYRT_CONFLICT;
+    } else if(s->directory.count>=TINYRT_STORE_MAX_APPS) return TINYRT_NO_SPACE;
+    if(s->directory.generation==UINT64_MAX||s->revision==UINT64_MAX) return TINYRT_CONFLICT;
 
     tinyrt_install_t *h=calloc(1,sizeof(*h));
     if(!h) return TINYRT_NO_MEMORY;
@@ -115,18 +122,30 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
     /* Normalize unused ID bytes; directory serialization is canonical. */
     memset(h->expected.id.app_id,0,32);
     memcpy(h->expected.id.app_id,a->id.app_id,strlen(a->id.app_id));
-    bool used[3]={false,false,false};
-    for(uint32_t i=0;i<s->directory.count;++i) used[s->directory.records[i].slot]=true;
-    while(h->slot<3&&used[h->slot]) ++h->slot;
-    if(h->slot==3) {free(h);return TINYRT_NO_SPACE;}
+    uint32_t needed=tr_extent_size(a->package_size);
+    h->offset=2*TINYRT_STORE_SECTOR_SIZE;
+    /* First fit across all committed extents, including quarantined packages
+     * and the old version being updated. Staging never erases either one. */
+    for(;;) {
+        if(needed>TINYRT_STORE_SIZE-h->offset) {free(h);return TINYRT_NO_SPACE;}
+        uint32_t next=h->offset;
+        for(uint32_t i=0;i<s->directory.count;++i) {
+            const tr_record_t *record=&s->directory.records[i];
+            uint32_t end=record->offset+tr_extent_size(record->app.package_size);
+            if(h->offset<end && record->offset<h->offset+needed && end>next) next=end;
+        }
+        if(next==h->offset) break;
+        h->offset=next;
+    }
     if(s->active_sector<0) {
-        tr_directory_t empty={0};empty.generation=1;
-        r=publish_directory(s,&empty);
+        tr_directory_t *empty=calloc(1,sizeof(*empty));
+        if(!empty) {free(h);return TINYRT_NO_MEMORY;}
+        empty->generation=1;r=publish_directory(s,empty);free(empty);
         if(r!=TINYRT_OK) {free(h);return r;}
     }
     /* Each erase call is one physical sector, making failure boundaries explicit. */
-    for(uint32_t off=0;off<TINYRT_STORE_SLOT_SIZE;off+=4096) {
-        r=s->io.erase(s->io.ctx,tr_slot_offset(h->slot)+off,4096);
+    for(uint32_t off=0;off<needed;off+=4096) {
+        r=s->io.erase(s->io.ctx,h->offset+off,4096);
         if(r!=TINYRT_OK) {free(h);return refresh_after_error(s,r);}
     }
     s->install=h;*out=h;return TINYRT_OK;
@@ -137,7 +156,7 @@ tinyrt_status_t tinyrt_store_write(tinyrt_install_t *h,uint32_t off,const void *
     if(h->committed||off!=h->received||off>h->expected.package_size||
        n>h->expected.package_size-off) return TINYRT_INVALID_ARGUMENT;
     tinyrt_store_t *s=h->store;
-    tinyrt_status_t r=s->io.program(s->io.ctx,tr_slot_offset(h->slot)+off,bytes,n);
+    tinyrt_status_t r=s->io.program(s->io.ctx,h->offset+off,bytes,n);
     if(r!=TINYRT_OK) {h->failed=true;return refresh_after_error(s,r);}
     h->received+=n;return TINYRT_OK;
 }
@@ -147,19 +166,22 @@ tinyrt_status_t tinyrt_store_commit(tinyrt_install_t *h) {
     if(h->failed) return TINYRT_IO_ERROR;
     if(h->received!=h->expected.package_size) return TINYRT_INVALID_ARGUMENT;
     tinyrt_store_t *s=h->store;
+    if(s->revision==UINT64_MAX) return TINYRT_CONFLICT;
     tinyrt_status_t r=s->io.sync(s->io.ctx);
     tinyrt_app_info_t actual={0};
     if(r==TINYRT_OK)
-        r=s->verify(s->verify_ctx,&s->io,tr_slot_offset(h->slot),h->received,&actual);
+        r=s->verify(s->verify_ctx,&s->io,h->offset,h->received,&actual);
     if(r==TINYRT_OK&&(!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&h->expected)))
         r=TINYRT_VERIFY_FAILED;
     if(r!=TINYRT_OK) {h->failed=true;return refresh_after_error(s,r);}
-    tr_directory_t next=s->directory;
+    tr_directory_t *next=malloc(sizeof(*next));
+    if(!next) return TINYRT_NO_MEMORY;
+    *next=s->directory;
     int index=find_app(s,h->expected.id.app_id);
-    if(index<0) index=(int)next.count++;
-    next.records[index].app=h->expected;next.records[index].slot=h->slot;
-    ++next.generation;
-    r=publish_directory(s,&next);
+    if(index<0) index=(int)next->count++;
+    next->records[index].app=h->expected;next->records[index].offset=h->offset;
+    ++next->generation;
+    r=publish_directory(s,next);free(next);
     if(r==TINYRT_OK && s->directory.records[index].quarantined) r=TINYRT_VERIFY_FAILED;
     if(r==TINYRT_OK) h->committed=true;else h->failed=true;
     return r;
@@ -176,13 +198,15 @@ tinyrt_status_t tinyrt_store_uninstall(tinyrt_store_t *s,const char *id) {
     if(r!=TINYRT_OK) return r;
     int index=find_app(s,id);
     if(index<0) return TINYRT_NOT_FOUND;
-    if(s->directory.generation==UINT64_MAX) return TINYRT_CONFLICT;
-    tr_directory_t next=s->directory;
-    --next.count;
-    if((uint32_t)index<next.count) next.records[index]=next.records[next.count];
-    memset(&next.records[next.count],0,sizeof(next.records[0]));
-    ++next.generation;
-    return publish_directory(s,&next);
+    if(s->directory.generation==UINT64_MAX||s->revision==UINT64_MAX) return TINYRT_CONFLICT;
+    tr_directory_t *next=malloc(sizeof(*next));
+    if(!next) return TINYRT_NO_MEMORY;
+    *next=s->directory;
+    --next->count;
+    if((uint32_t)index<next->count) next->records[index]=next->records[next->count];
+    memset(&next->records[next->count],0,sizeof(next->records[0]));
+    ++next->generation;
+    r=publish_directory(s,next);free(next);return r;
 }
 
 tinyrt_status_t tinyrt_store_read(tinyrt_store_t *s,const tinyrt_package_id_t *id,
@@ -198,7 +222,7 @@ tinyrt_status_t tinyrt_store_read(tinyrt_store_t *s,const tinyrt_package_id_t *i
         if(record->quarantined) return TINYRT_VERIFY_FAILED;
         if(offset>=record->app.package_size||size>record->app.package_size-offset)
             return TINYRT_INVALID_ARGUMENT;
-        uint32_t base=tr_slot_offset(record->slot)+offset;
+        uint32_t base=record->offset+offset;
         uint8_t *out=bytes;
         for(uint32_t done=0;done<size;) {
             uint32_t n=size-done;if(n>TINYRT_STORE_SECTOR_SIZE) n=TINYRT_STORE_SECTOR_SIZE;
@@ -209,4 +233,50 @@ tinyrt_status_t tinyrt_store_read(tinyrt_store_t *s,const tinyrt_package_id_t *i
         return TINYRT_OK;
     }
     return TINYRT_NOT_FOUND;
+}
+
+tinyrt_status_t tinyrt_store_generation(tinyrt_store_t *s,uint64_t *out) {
+    if(!out) return TINYRT_INVALID_ARGUMENT;
+    *out=0;
+    if(!s) return TINYRT_INVALID_ARGUMENT;
+    if(s->dirty) {tinyrt_status_t r=tr_recover(s);if(r!=TINYRT_OK) return r;}
+    *out=s->revision;return TINYRT_OK;
+}
+
+tinyrt_status_t tinyrt_store_stats(tinyrt_store_t *s,tinyrt_store_stats_t *out) {
+    if(!out) return TINYRT_INVALID_ARGUMENT;
+    memset(out,0,sizeof(*out));
+    if(!s) return TINYRT_INVALID_ARGUMENT;
+    if(s->install) return TINYRT_BUSY;
+    if(s->dirty) {tinyrt_status_t r=tr_recover(s);if(r!=TINYRT_OK) return r;}
+    tinyrt_store_stats_t stats={0};
+    stats.generation=s->revision;
+    stats.total_bytes=TINYRT_STORE_SIZE;
+    stats.data_bytes=TINYRT_STORE_SIZE-2*TINYRT_STORE_SECTOR_SIZE;
+    stats.max_apps=TINYRT_STORE_MAX_APPS;
+    stats.max_package_size=TINYRT_STORE_MAX_PACKAGE_SIZE;
+    stats.installed_count=s->directory.count;
+    for(uint32_t i=0;i<s->directory.count;++i) {
+        const tr_record_t *r=&s->directory.records[i];
+        stats.package_bytes+=r->app.package_size;
+        stats.allocated_bytes+=tr_extent_size(r->app.package_size);
+        if(r->quarantined) ++stats.quarantined_count;
+    }
+    stats.free_bytes=stats.data_bytes-stats.allocated_bytes;
+    /* Visit at most 16 extents in physical order without a temporary catalog.
+     * Validated, aligned, disjoint intervals make every subtraction bounded. */
+    uint32_t cursor=2*TINYRT_STORE_SECTOR_SIZE;
+    for(;;) {
+        uint32_t next=TINYRT_STORE_SIZE,end=TINYRT_STORE_SIZE;
+        for(uint32_t i=0;i<s->directory.count;++i) {
+            const tr_record_t *r=&s->directory.records[i];
+            if(r->offset>=cursor && r->offset<next) {
+                next=r->offset;end=next+tr_extent_size(r->app.package_size);
+            }
+        }
+        if(next-cursor>stats.largest_free_bytes) stats.largest_free_bytes=next-cursor;
+        if(next==TINYRT_STORE_SIZE) break;
+        cursor=end;
+    }
+    *out=stats;return TINYRT_OK;
 }

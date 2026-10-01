@@ -4,15 +4,20 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define TINYRT_STORE_SIZE UINT32_C(0xE0000)
+#define TINYRT_STORE_SIZE UINT32_C(0x4E0000)
 #define TINYRT_STORE_SECTOR_SIZE UINT32_C(0x1000)
-#define TINYRT_STORE_SLOT_SIZE UINT32_C(0x4A000)
-#define TINYRT_STORE_SLOT_COUNT 3u
-#define TINYRT_STORE_MAX_APPS 2u
+#define TINYRT_STORE_MAX_PACKAGE_SIZE UINT32_C(0x200000)
+#define TINYRT_STORE_MAX_APPS 16u
 typedef struct tinyrt_store tinyrt_store_t;
 typedef struct tinyrt_install tinyrt_install_t;
 typedef struct { char app_id[32]; uint32_t version; uint8_t sha256[32]; } tinyrt_package_id_t;
 typedef struct { tinyrt_package_id_t id; uint32_t package_size; } tinyrt_app_info_t;
+typedef struct {
+    uint64_t generation;
+    uint32_t total_bytes, data_bytes, package_bytes, allocated_bytes;
+    uint32_t free_bytes, largest_free_bytes, installed_count, quarantined_count;
+    uint32_t max_apps, max_package_size;
+} tinyrt_store_stats_t;
 typedef enum {
     TINYRT_OK = 0, TINYRT_ALREADY_INSTALLED, TINYRT_INVALID_ARGUMENT,
     TINYRT_IO_ERROR, TINYRT_CORRUPT, TINYRT_NO_SPACE, TINYRT_BUSY,
@@ -33,13 +38,21 @@ typedef tinyrt_status_t (*tinyrt_package_verify_fn)(void *, const tinyrt_store_i
  * before mutation. IO callbacks enforce store bounds. */
 tinyrt_status_t tinyrt_store_open(const tinyrt_store_io_t *, tinyrt_package_verify_fn, void *, tinyrt_store_t **);
 void tinyrt_store_close(tinyrt_store_t *);
+/* Opaque inventory revision for this open store; includes RAM quarantine changes.
+ * Blank inventory may be 0. Read/recovery only, never writes media; zero output on
+ * error. Caller serializes with list/mutations. Restart requires a fresh listing. */
+tinyrt_status_t tinyrt_store_generation(tinyrt_store_t *, uint64_t *);
+/* Read-only committed space, including quarantined extents. Installed count
+ * includes quarantine. Active install handles return BUSY; output is zero on
+ * all failures. Generation is the same opaque inventory revision as above. */
+tinyrt_status_t tinyrt_store_stats(tinyrt_store_t *, tinyrt_store_stats_t *);
 tinyrt_status_t tinyrt_store_list(tinyrt_store_t *, tinyrt_app_info_t *, uint32_t, uint32_t *);
-/* Quarantine preserves the committed identity/slot and counts against capacity.
+/* Quarantine preserves the committed identity/extent and counts against capacity.
  * Healthy list excludes these entries. Query/read return VERIFY_FAILED for an
  * exact quarantined identity (zero query output), NOT_FOUND for stale identities.
  * Reinstalling identical bytes repairs it; higher versions replace it normally.
- * Uninstall remains available. This is RAM health derived on recovery; directory
- * and package formats do not change and recovery never writes/erases bytes. */
+ * Uninstall remains available. This is RAM health derived on recovery; quarantine
+ * is not serialized and recovery never writes/erases bytes. */
 tinyrt_status_t tinyrt_store_list_quarantined(tinyrt_store_t *, tinyrt_app_info_t *, uint32_t, uint32_t *);
 /* Revalidate one exact committed identity and update its RAM health, without
  * writing media. VERIFY_FAILED confirms quarantine; resource/configuration/IO

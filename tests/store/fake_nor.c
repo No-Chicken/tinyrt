@@ -8,7 +8,7 @@ static tinyrt_status_t rd(void *c,uint32_t o,void *d,uint32_t n) {
 }
 static tinyrt_status_t mut(fake_nor_t *f,char k,uint32_t o,const void *d,uint32_t n) {
  if(!bounds(o,n)) return TINYRT_INVALID_ARGUMENT;
- if(f->powered_off || f->mutations>=2048) return TINYRT_IO_ERROR;
+ if(f->powered_off || f->mutations>=16384) return TINYRT_IO_ERROR;
  if(k=='P') {const uint8_t *b=d;for(uint32_t i=0;i<n;++i) if((f->bytes[o+i]&b[i])!=b[i]) return TINYRT_IO_ERROR;}
  f->log[f->mutations]=(fake_nor_op_t){k,o,n};++f->mutations;
  int fail=f->fail_at && f->mutations==f->fail_at;

@@ -4,7 +4,7 @@
 typedef struct { char kind; uint32_t off, len; } fake_nor_op_t;
 typedef struct {
     uint8_t bytes[TINYRT_STORE_SIZE];
-    fake_nor_op_t log[2048];
+    fake_nor_op_t log[16384];
     unsigned mutations, reads, fail_at;
     uint32_t partial_bytes;
     int powered_off, fail_read, stay_on_after_failure, fail_reads_on_failure;

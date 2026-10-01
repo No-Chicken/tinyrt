@@ -71,7 +71,7 @@ def fixtures(folder):
                              ("high_s",224,ORDER-int.from_bytes(good[224:256],"big"))]:
         bad=bytearray(good); bad[offset:offset+32]=value.to_bytes(32,"big"); cases[name]=bad
     cases["truncated"]=good[:-1]; cases["appended"]=good+b"x"; cases["short_header"]=good[:255]
-    for name, assets in [("no_assets", b""), ("maximum", bytes(0x4a000-256-len(WASM)))]:
+    for name, assets in [("no_assets", b""), ("maximum", bytes(0x200000-256-len(WASM)))]:
         head=bytearray(h)
         struct.pack_into("<I",head,12,256+len(WASM)+len(assets))
         struct.pack_into("<I",head,28,len(assets))

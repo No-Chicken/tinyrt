@@ -1,5 +1,5 @@
 """Integration contract for the core's stdin-driven Wasm runner."""
-import json, os, subprocess, unittest
+import json, os, subprocess, unittest, zlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 RUNNER=Path(os.environ.get('TINYRT_RUNNER',str(ROOT/'build/tinyrt-run.exe')))
@@ -67,4 +67,21 @@ class Runner(unittest.TestCase):
         self.assertNotEqual(r[-2]['status'],0)
         self.assertIsNone(r[-2]['kv'][0])
         self.assertEqual(r[-1]['heap_bytes'],0)
+    def test_rgb565_owned_pixels_are_summarized(self):
+        p,r=self.run_guest('pixel_valid')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual(r[0]['frame'][1]['kind'],7)
+        self.assertEqual(r[0]['pixel_bytes'],8)
+        self.assertEqual(r[0]['pixel_crc32'],zlib.crc32(bytes.fromhex('00f8e0071f00ffff')))
+        self.assertEqual(r[-1]['pixel_bytes'],0)
+    def test_skipped_tick_has_no_frame_or_pixels(self):
+        p,r=self.run_guest('pixel_then_skip','tick 1\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual(r[0]['pixel_bytes'],8)
+        self.assertEqual(r[1]['frame'],[])
+        self.assertEqual(r[1]['pixel_bytes'],0)
+    def test_clock_interval_is_exposed(self):
+        p,r=self.run_guest('clock_valid','tick 1000\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['clock_interval_ms'] for x in r],[1,1000,100])
 if __name__=='__main__':unittest.main()

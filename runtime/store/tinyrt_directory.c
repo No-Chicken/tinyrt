@@ -20,7 +20,7 @@ static bool all_value(const uint8_t *p,uint32_t n,uint8_t value) {
     for(uint32_t i=0;i<n;++i) if(p[i]!=value) return false;
     return true;
 }
-uint32_t tr_slot_offset(uint32_t slot) { return 0x2000u+slot*TINYRT_STORE_SLOT_SIZE; }
+uint32_t tr_extent_size(uint32_t size) { return (size+4095u)&~UINT32_C(4095); }
 bool tr_id_valid(const char *id) {
     if(!id || !id[0]) return false;
     for(unsigned i=0;i<32;++i) {
@@ -37,19 +37,19 @@ bool tr_app_equal(const tinyrt_app_info_t *a,const tinyrt_app_info_t *b) {
     return a->package_size==b->package_size && tr_identity_equal(&a->id,&b->id);
 }
 void tr_directory_encode(const tr_directory_t *d,uint8_t *b) {
-    memset(b,255,4096);memcpy(b,"TRDIR001",8);
-    put32(b+8,1);put32(b+12,d->count);put64(b+16,d->generation);memset(b+24,0,8);
+    memset(b,255,4096);memcpy(b,"TRDIR002",8);
+    put32(b+8,2);put32(b+12,d->count);put64(b+16,d->generation);memset(b+24,0,8);
     for(uint32_t i=0;i<d->count;++i) {
         const tr_record_t *r=&d->records[i];uint8_t *p=b+32+80*i;
         memset(p,0,80);memcpy(p,r->app.id.app_id,strlen(r->app.id.app_id));
-        put32(p+32,r->app.id.version);put32(p+36,r->slot);put32(p+40,r->app.package_size);
+        put32(p+32,r->app.id.version);put32(p+36,r->offset);put32(p+40,r->app.package_size);
         memcpy(p+44,r->app.id.sha256,32);
     }
     put32(b+4088,crc32(b,4088));put32(b+4092,0);
 }
 static bool decode(const uint8_t *b,tr_directory_t *d) {
     memset(d,0,sizeof(*d));
-    if(memcmp(b,"TRDIR001",8)||get32(b+8)!=1||get32(b+12)>2||!get64(b+16)||
+    if(memcmp(b,"TRDIR002",8)||get32(b+8)!=2||get32(b+12)>TINYRT_STORE_MAX_APPS||!get64(b+16)||
        get32(b+4092)!=0||get32(b+4088)!=crc32(b,4088)||!all_value(b+24,8,0)) return false;
     d->count=get32(b+12);d->generation=get64(b+16);
     if(!all_value(b+32+80*d->count,4088-(32+80*d->count),255)) return false;
@@ -59,25 +59,32 @@ static bool decode(const uint8_t *b,tr_directory_t *d) {
         if(!tr_id_valid(r->app.id.app_id)) return false;
         size_t used=strlen(r->app.id.app_id);
         if(!all_value(p+(uint32_t)used,32-(uint32_t)used,0)) return false;
-        r->app.id.version=get32(p+32);r->slot=get32(p+36);r->app.package_size=get32(p+40);
+        r->app.id.version=get32(p+32);r->offset=get32(p+36);r->app.package_size=get32(p+40);
         memcpy(r->app.id.sha256,p+44,32);
-        if(!r->app.id.version||r->slot>=3||!r->app.package_size||
-           r->app.package_size>TINYRT_STORE_SLOT_SIZE||get32(p+76)) return false;
-        if(i && (r->slot==d->records[0].slot||!strcmp(r->app.id.app_id,d->records[0].app.id.app_id))) return false;
+        if(!r->app.id.version||!r->app.package_size||
+           r->app.package_size>TINYRT_STORE_MAX_PACKAGE_SIZE||get32(p+76)||
+           r->offset<2*TINYRT_STORE_SECTOR_SIZE||r->offset%TINYRT_STORE_SECTOR_SIZE||
+           r->offset>TINYRT_STORE_SIZE||tr_extent_size(r->app.package_size)>TINYRT_STORE_SIZE-r->offset) return false;
+        for(uint32_t j=0;j<i;++j) {
+            const tr_record_t *other=&d->records[j];
+            if(!strcmp(r->app.id.app_id,other->app.id.app_id)||
+               (r->offset<other->offset+tr_extent_size(other->app.package_size)&&
+                other->offset<r->offset+tr_extent_size(r->app.package_size))) return false;
+        }
     }
     return true;
 }
 static bool directories_equal(const tr_directory_t *a,const tr_directory_t *b) {
-    if(a->count!=b->count) return false;
+    if(a->generation!=b->generation||a->count!=b->count) return false;
     for(uint32_t i=0;i<a->count;++i)
-        if(a->records[i].slot!=b->records[i].slot||!tr_app_equal(&a->records[i].app,&b->records[i].app)) return false;
+        if(a->records[i].offset!=b->records[i].offset||!tr_app_equal(&a->records[i].app,&b->records[i].app)) return false;
     return true;
 }
-static tinyrt_status_t initial_state(tinyrt_store_t *s,uint8_t *b) {
-    tr_directory_t empty={0};empty.generation=1;
+static tinyrt_status_t initial_state(tinyrt_store_t *s,uint8_t *b,tr_directory_t *empty) {
+    memset(empty,0,sizeof(*empty));empty->generation=1;
     uint8_t *expected=malloc(4096);
     if(!expected) return TINYRT_NO_MEMORY;
-    tr_directory_encode(&empty,expected);
+    tr_directory_encode(empty,expected);
     tinyrt_status_t result=s->io.read(s->io.ctx,0,b,4096);
     if(result==TINYRT_OK) {
         for(unsigned i=0;i<4096;++i) if((b[i]&expected[i])!=expected[i]) {result=TINYRT_CORRUPT;break;}
@@ -89,29 +96,34 @@ static tinyrt_status_t initial_state(tinyrt_store_t *s,uint8_t *b) {
         if(result!=TINYRT_OK) return result;
         if(!all_value(b,4096,255)) return TINYRT_CORRUPT;
     }
-    memset(&s->directory,0,sizeof(s->directory));s->active_sector=-1;
+    memset(empty,0,sizeof(*empty));
     return TINYRT_OK;
 }
 tinyrt_status_t tr_recover(tinyrt_store_t *s) {
-    tr_directory_t d[2];bool valid[2]={false,false};
+    /* Recovery nests under verification/manager calls: keep both 16-record
+     * candidate directories and the 4 KiB sector off the owner task stack. */
+    tr_directory_t *d=calloc(2,sizeof(*d));
     uint8_t *b=malloc(4096);
-    if(!b) return TINYRT_NO_MEMORY;
+    if(!d||!b) {free(d);free(b);return TINYRT_NO_MEMORY;}
+    bool valid[2]={false,false};
     tinyrt_status_t result=TINYRT_OK;
     for(unsigned sector=0;sector<2;++sector) {
         result=s->io.read(s->io.ctx,sector*4096,b,4096);
         if(result!=TINYRT_OK) goto done;
+        if(!memcmp(b,"TRDIR001",8)) {result=TINYRT_CORRUPT;goto done;}
         valid[sector]=decode(b,&d[sector]);
     }
     if(valid[0]&&valid[1]&&d[0].generation==d[1].generation&&!directories_equal(&d[0],&d[1])) {
         result=TINYRT_CORRUPT;goto done;
     }
+    unsigned pick=0;int active=-1;
     if(valid[0]||valid[1]) {
-        unsigned pick=valid[1]&&(!valid[0]||d[1].generation>d[0].generation)?1u:0u;
+        pick=valid[1]&&(!valid[0]||d[1].generation>d[0].generation)?1u:0u;
         /* Commit history is selected solely from directory structure. A bad
          * app must never resurrect an uninstalled app or roll back an update. */
         for(uint32_t i=0;i<d[pick].count;++i) {
             tr_record_t *r=&d[pick].records[i];tinyrt_app_info_t actual={0};
-            result=s->verify(s->verify_ctx,&s->io,tr_slot_offset(r->slot),r->app.package_size,&actual);
+            result=s->verify(s->verify_ctx,&s->io,r->offset,r->app.package_size,&actual);
             if(result==TINYRT_VERIFY_FAILED||result==TINYRT_CORRUPT) {
                 r->quarantined=true;result=TINYRT_OK;continue;
             }
@@ -120,8 +132,17 @@ tinyrt_status_t tr_recover(tinyrt_store_t *s) {
             if(result!=TINYRT_OK) goto done;
             r->quarantined=!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&r->app);
         }
-        s->directory=d[pick];s->active_sector=(int)pick;
-    } else result=initial_state(s,b);
+        active=(int)pick;
+    } else {
+        result=initial_state(s,b,&d[0]);
+        if(result!=TINYRT_OK) goto done;
+    }
+    bool changed=!directories_equal(&s->directory,&d[pick]);
+    for(uint32_t i=0;!changed && i<d[pick].count;++i)
+        changed=s->directory.records[i].quarantined!=d[pick].records[i].quarantined;
+    if(changed && s->revision==UINT64_MAX) {result=TINYRT_CONFLICT;goto done;}
+    s->directory=d[pick];s->active_sector=active;
+    if(changed) ++s->revision;
 done:
-    free(b);s->dirty=result!=TINYRT_OK;return result;
+    free(d);free(b);s->dirty=result!=TINYRT_OK;return result;
 }

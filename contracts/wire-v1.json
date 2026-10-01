@@ -11,11 +11,10 @@
       "TINYRT_PERMISSION_ALL": 15
     },
     "runtime/include/tinyrt_store.h": {
-      "TINYRT_STORE_SIZE": 917504,
+      "TINYRT_STORE_SIZE": 5111808,
       "TINYRT_STORE_SECTOR_SIZE": 4096,
-      "TINYRT_STORE_SLOT_SIZE": 303104,
-      "TINYRT_STORE_SLOT_COUNT": 3,
-      "TINYRT_STORE_MAX_APPS": 2
+      "TINYRT_STORE_MAX_PACKAGE_SIZE": 2097152,
+      "TINYRT_STORE_MAX_APPS": 16
     },
     "protocol/tinyrt_transport.h": {
       "TINYRT_MGMT_VERSION": 1,
@@ -30,7 +29,12 @@
       "TINYRT_OP_LAUNCH": 21,
       "TINYRT_OP_STOP": 22,
       "TINYRT_OP_LIST_QUARANTINED": 23,
-      "TINYRT_CAP_QUARANTINE": 8
+      "TINYRT_CAP_QUARANTINE": 8,
+      "TINYRT_OP_LIST_PAGE": 24,
+      "TINYRT_CAP_PAGED_LIST": 16,
+      "TINYRT_OP_STORAGE": 25,
+      "TINYRT_CAP_STORAGE": 32,
+      "TINYRT_OP_APP_INFO": 26
     }
   },
   "package": {
@@ -70,6 +74,238 @@
       "response": "u8 count, followed by count standard 72-byte app-info records",
       "query_status": 9,
       "semantics": "Exact quarantined identities may be repaired by resending the same signed package or uninstalled. Final successful install still requires QUERY OK with the exact identity."
+    },
+    "legacy_list": {
+      "opcodes": [
+        17,
+        23
+      ],
+      "max_records": 2,
+      "overflow_status": 5,
+      "semantics": "Return NO_SPACE instead of truncating any list larger than two records."
+    },
+    "paged_list": {
+      "hello_capability_bit": 16,
+      "opcode": 24,
+      "request_size": 10,
+      "request": {
+        "kind": {
+          "offset": 0,
+          "type": "u8",
+          "values": {
+            "healthy": 0,
+            "quarantined": 1
+          }
+        },
+        "offset": {
+          "offset": 1,
+          "type": "u8"
+        },
+        "generation": {
+          "offset": 2,
+          "type": "u64le"
+        }
+      },
+      "response_header_size": 11,
+      "response": {
+        "generation": {
+          "offset": 0,
+          "type": "u64le"
+        },
+        "total": {
+          "offset": 8,
+          "type": "u8"
+        },
+        "offset": {
+          "offset": 9,
+          "type": "u8"
+        },
+        "count": {
+          "offset": 10,
+          "type": "u8"
+        },
+        "records": {
+          "offset": 11,
+          "record_size": 72,
+          "max_count": 3
+        }
+      },
+      "first_page": {
+        "offset": 0,
+        "generation": 0
+      },
+      "conflict_status": 7,
+      "semantics": "Generation is an opaque uint64 inventory revision for this store lifetime, including RAM quarantine membership changes. Blank stores may return 0. Continuation pages must match the current revision. A reconnect starts again from page zero. Revision overflow returns CONFLICT, never wraps. Clients validate total, offset, count, ordering and generation and restart the whole listing only a bounded number of times."
+    },
+    "storage": {
+      "opcode": 25,
+      "hello_capability_bit": 32,
+      "request_size": 0,
+      "response_size": 92,
+      "schema_version": 1,
+      "response": {
+        "schema": {
+          "offset": 0,
+          "type": "u16le"
+        },
+        "flags": {
+          "offset": 2,
+          "type": "u16le"
+        },
+        "generation": {
+          "offset": 4,
+          "type": "u64le"
+        },
+        "package_total_bytes": {
+          "offset": 12,
+          "type": "u32le"
+        },
+        "data_bytes": {
+          "offset": 16,
+          "type": "u32le"
+        },
+        "package_bytes": {
+          "offset": 20,
+          "type": "u32le"
+        },
+        "allocated_bytes": {
+          "offset": 24,
+          "type": "u32le"
+        },
+        "free_bytes": {
+          "offset": 28,
+          "type": "u32le"
+        },
+        "largest_free_bytes": {
+          "offset": 32,
+          "type": "u32le"
+        },
+        "max_package_size": {
+          "offset": 36,
+          "type": "u32le"
+        },
+        "max_apps": {
+          "offset": 40,
+          "type": "u16le"
+        },
+        "installed_count": {
+          "offset": 42,
+          "type": "u16le"
+        },
+        "quarantined_count": {
+          "offset": 44,
+          "type": "u16le"
+        },
+        "reserved": {
+          "offset": 46,
+          "type": "u16le"
+        },
+        "app_data_total_bytes": {
+          "offset": 48,
+          "type": "u32le"
+        },
+        "internal_ram_total_bytes": {
+          "offset": 52,
+          "type": "u32le"
+        },
+        "internal_ram_free_bytes": {
+          "offset": 56,
+          "type": "u32le"
+        },
+        "internal_ram_largest_free_bytes": {
+          "offset": 60,
+          "type": "u32le"
+        },
+        "external_ram_total_bytes": {
+          "offset": 64,
+          "type": "u32le"
+        },
+        "external_ram_free_bytes": {
+          "offset": 68,
+          "type": "u32le"
+        },
+        "external_ram_largest_free_bytes": {
+          "offset": 72,
+          "type": "u32le"
+        },
+        "runtime_heap_limit": {
+          "offset": 76,
+          "type": "u32le"
+        },
+        "runtime_heap_used": {
+          "offset": 80,
+          "type": "u32le"
+        },
+        "runtime_heap_peak": {
+          "offset": 84,
+          "type": "u32le"
+        },
+        "shared_assets_total_bytes": {
+          "offset": 88,
+          "type": "u32le"
+        }
+      },
+      "flags": {
+        "ram_valid": 1
+      },
+      "reserved_value": 0,
+      "busy_status": 6,
+      "semantics": "Read-only committed storage; installed_count and allocation include quarantine. Active transfer returns BUSY. Generation is the opaque inventory revision. Flag bit 0 marks validity of only the six internal/external BSP RAM fields at offsets 52..72; when unavailable the producer writes these six as zero and clients expose them as null. The runtime heap limit/used/peak fields at 76..84 remain valid independently. Unknown flags or schema are rejected. Runtime heap tracks the bounded runtime allocator; manager/store and system overhead are excluded."
+    },
+    "app_info": {
+      "opcode": 26,
+      "request_size": 68,
+      "request": "full identity68 (app_id[32], version:u32le, whole_package_sha256[32])",
+      "response_size": 164,
+      "response": {
+        "app": {
+          "offset": 0,
+          "type": "info72"
+        },
+        "title": {
+          "offset": 72,
+          "type": "utf8[64]"
+        },
+        "key_id": {
+          "offset": 136,
+          "type": "u32le"
+        },
+        "abi_version": {
+          "offset": 140,
+          "type": "u32le"
+        },
+        "permissions": {
+          "offset": 144,
+          "type": "u32le"
+        },
+        "memory_pages": {
+          "offset": 148,
+          "type": "u32le"
+        },
+        "instruction_budget": {
+          "offset": 152,
+          "type": "u32le"
+        },
+        "wasm_size": {
+          "offset": 156,
+          "type": "u32le"
+        },
+        "assets_size": {
+          "offset": 160,
+          "type": "u32le"
+        }
+      },
+      "semantics": "Only fully verified healthy metadata matching the requested identity. Title is canonical NUL-terminated UTF-8 with zero padding. Quarantined identities use the quarantine list; unverified headers are never metadata."
     }
+  },
+  "store": {
+    "magic": "TRDIR002",
+    "format_version": 2,
+    "directory_sectors": 2,
+    "record_size": 80,
+    "record_package_offset": 36,
+    "allocation_alignment": 4096,
+    "allocation": "first fit contiguous extents; current committed healthy and quarantined extents excluded; updates use separate staging; no compaction",
+    "legacy": "TRDIR001 is rejected without formatting"
   }
 }

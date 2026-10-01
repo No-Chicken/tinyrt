@@ -1,5 +1,6 @@
 #include "fake_nor.h"
 #include "test_package_verifier.h"
+#include "tinyrt_store_internal.h" /* White-box revision overflow injection only. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -29,7 +30,7 @@ static void test_program_requires_erase(void) {
     CHECK(io.program(io.ctx, 0x2000, &b, 1) == TINYRT_OK);
 }
 
-static uint8_t pkg[TINYRT_STORE_SLOT_SIZE];
+static uint8_t pkg[TINYRT_STORE_MAX_PACKAGE_SIZE];
 static void put32(uint8_t *b,uint32_t v) {for(unsigned i=0;i<4;++i) b[i]=(uint8_t)(v>>(8*i));}
 static void put64(uint8_t *b,uint64_t v) {for(unsigned i=0;i<8;++i) b[i]=(uint8_t)(v>>(8*i));}
 static uint32_t crc32(const uint8_t *b,uint32_t n) {
@@ -37,17 +38,17 @@ static uint32_t crc32(const uint8_t *b,uint32_t n) {
  for(uint32_t i=0;i<n;++i) {c^=b[i];for(unsigned j=0;j<8;++j) c=(c>>1)^(UINT32_C(0xedb88320)&(0u-(c&1u)));}
  return ~c;
 }
-static uint32_t slot_off(unsigned i) {return 0x2000u+i*TINYRT_STORE_SLOT_SIZE;}
+static uint32_t fixture_offset(unsigned i) {return 0x2000u+i*0x1000u;}
 static tinyrt_app_info_t fixture(unsigned slot,const char *id,uint32_t ver) {
- tinyrt_app_info_t a;test_package_make(pkg,300,id,ver,17,&a);memcpy(nor.bytes+slot_off(slot),pkg,300);return a;
+ tinyrt_app_info_t a;test_package_make(pkg,300,id,ver,17,&a);memcpy(nor.bytes+fixture_offset(slot),pkg,300);return a;
 }
 /* Independent on-media fixture builder; does not call the production encoder. */
 static void directory(unsigned sector,uint64_t gen,const tinyrt_app_info_t *a,const unsigned *slots,unsigned n) {
  uint8_t *b=nor.bytes+sector*4096;memset(b,255,4096);
- memcpy(b,"TRDIR001",8);put32(b+8,1);put32(b+12,n);put64(b+16,gen);memset(b+24,0,8);
+ memcpy(b,"TRDIR002",8);put32(b+8,2);put32(b+12,n);put64(b+16,gen);memset(b+24,0,8);
  for(unsigned i=0;i<n;++i) {
   uint8_t *p=b+32+80*i;memcpy(p,a[i].id.app_id,32);put32(p+32,a[i].id.version);
-  put32(p+36,slots[i]);put32(p+40,a[i].package_size);memcpy(p+44,a[i].id.sha256,32);put32(p+76,0);
+  put32(p+36,fixture_offset(slots[i]));put32(p+40,a[i].package_size);memcpy(p+44,a[i].id.sha256,32);put32(p+76,0);
  }
  put32(b+4088,crc32(b,4088));put32(b+4092,0);
 }
@@ -74,7 +75,7 @@ static void test_reject_torn_commit(void) {
 }
 static void test_invalid_referenced_package(void) {
  fake_nor_init(&nor);tinyrt_app_info_t a=fixture(0,"app",1);unsigned slot=0;directory(0,1,&a,&slot,1);
- nor.bytes[slot_off(0)+100]^=1;tinyrt_store_t *s=(void *)1;
+ nor.bytes[fixture_offset(0)+100]^=1;tinyrt_store_t *s=(void *)1;
  CHECK(open_store(&s)==TINYRT_OK && s!=NULL);CHECK(nor.mutations==0);
  tinyrt_app_info_t out[2];uint32_t count=99;
  CHECK(tinyrt_store_list(s,out,2,&count)==TINYRT_OK && count==0);
@@ -85,7 +86,7 @@ static void test_quarantine_keeps_newest_directory(void) {
  fake_nor_init(&nor);tinyrt_app_info_t a[2]={fixture(0,"healthy",1),fixture(1,"broken",2)};
  unsigned slots[2]={0,1};directory(0,10,a,slots,2);
  /* Newest generation uninstalled healthy. Corrupting broken must not resurrect it. */
- directory(1,11,a+1,slots+1,1);nor.bytes[slot_off(1)+100]^=1;
+ directory(1,11,a+1,slots+1,1);nor.bytes[fixture_offset(1)+100]^=1;
  tinyrt_store_t*s=NULL;tinyrt_app_info_t out[2];uint32_t count=99;
  CHECK(open_store(&s)==TINYRT_OK);
  CHECK(tinyrt_store_list(s,out,2,&count)==TINYRT_OK&&count==0);
@@ -100,7 +101,7 @@ static void test_quarantine_keeps_newest_directory(void) {
 static void test_quarantine_does_not_rollback_version(void) {
  fake_nor_init(&nor);tinyrt_app_info_t old=fixture(0,"app",1),latest=fixture(1,"app",2);
  unsigned slot=0;directory(0,1,&old,&slot,1);slot=1;directory(1,2,&latest,&slot,1);
- nor.bytes[slot_off(1)+100]^=1;tinyrt_store_t*s=NULL;tinyrt_app_info_t out;
+ nor.bytes[fixture_offset(1)+100]^=1;tinyrt_store_t*s=NULL;tinyrt_app_info_t out;
  CHECK(open_store(&s)==TINYRT_OK);
  CHECK(tinyrt_store_query(s,&old.id,&out)==TINYRT_NOT_FOUND);
  CHECK(tinyrt_store_query(s,&latest.id,&out)==TINYRT_VERIFY_FAILED);
@@ -115,7 +116,7 @@ static void test_quarantine_does_not_rollback_version(void) {
 }
 static tinyrt_status_t injected_verify_status;
 static tinyrt_status_t injected_verify(void*c,const tinyrt_store_io_t*io,uint32_t off,uint32_t n,tinyrt_app_info_t*a) {
- if(off==slot_off(1)&&injected_verify_status!=TINYRT_OK)return injected_verify_status;
+ if(off==fixture_offset(1)&&injected_verify_status!=TINYRT_OK)return injected_verify_status;
  return test_package_verify(c,io,off,n,a);
 }
 static void test_resource_failure_is_not_quarantine(void) {
@@ -138,7 +139,7 @@ static void test_resource_failure_is_not_quarantine(void) {
   CHECK(tinyrt_store_list(s,out,2,&count)==TINYRT_OK&&count==2);
   CHECK(tinyrt_store_list_quarantined(s,out,2,&count)==TINYRT_OK&&count==0);
  }
- injected_verify_status=TINYRT_OK;nor.bytes[slot_off(1)+100]^=1;
+ injected_verify_status=TINYRT_OK;nor.bytes[fixture_offset(1)+100]^=1;
  CHECK(tinyrt_store_recheck(s,&a[1].id)==TINYRT_VERIFY_FAILED);
  CHECK(tinyrt_store_list(s,out,2,&count)==TINYRT_OK&&count==1&&!strcmp(out[0].id.app_id,"healthy"));
  CHECK(tinyrt_store_list_quarantined(s,NULL,0,&count)==TINYRT_NO_SPACE&&count==1);
@@ -160,7 +161,7 @@ static void test_initialization_recovery(void) {
  fake_nor_init(&nor);directory(0,1,NULL,NULL,0);
  memset(nor.bytes+50,255,4096-50);tinyrt_store_t *s=NULL;
  CHECK(open_store(&s)==TINYRT_OK);tinyrt_store_close(s);
- nor.bytes[slot_off(0)+30]=0;
+ nor.bytes[fixture_offset(0)+30]=0;
  CHECK(open_store(&s)==TINYRT_CORRUPT && s==NULL);
 }
 static void test_read_error_not_fallback(void) {
@@ -178,6 +179,180 @@ static tinyrt_app_info_t install_package(tinyrt_store_t *s,const char *id,uint32
   CHECK(tinyrt_store_write(h,pos,pkg+pos,n)==TINYRT_OK);pos+=n;
  }
  CHECK(tinyrt_store_commit(h)==TINYRT_OK);tinyrt_store_abort(h);return a;
+}
+static void test_sixteen_independent_apps(void) {
+ fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_app_info_t apps[16],out[16];
+ for(unsigned i=0;i<16;i++) {
+  char id[32];snprintf(id,sizeof(id),"small.%02u",15-i);
+  apps[i]=install_package(s,id,1,300+i);
+ }
+ uint32_t count=0;CHECK(tinyrt_store_list(s,out,16,&count)==TINYRT_OK && count==16);
+ tinyrt_store_stats_t stats;
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.installed_count==16&&stats.quarantined_count==0);
+ CHECK(stats.package_bytes==4920&&stats.allocated_bytes==65536);
+ CHECK(stats.free_bytes==0x4DE000-65536&&stats.largest_free_bytes==stats.free_bytes);
+ for(unsigned i=1;i<count;i++)CHECK(strcmp(out[i-1].id.app_id,out[i].id.app_id)<0);
+ tinyrt_app_info_t extra;test_package_make(pkg,300,"extra",1,31,&extra);tinyrt_install_t *h=NULL;
+ unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&extra,&h)==TINYRT_NO_SPACE && h==NULL);
+ CHECK(nor.mutations==mutations);
+ for(unsigned i=0;i<16;i++)CHECK(tinyrt_store_query(s,&apps[i].id,&out[i])==TINYRT_OK);
+ for(unsigned i=0;i<16;i++)CHECK(tinyrt_store_uninstall(s,apps[i].id.app_id)==TINYRT_OK);
+ CHECK(tinyrt_store_list(s,out,16,&count)==TINYRT_OK && count==0);tinyrt_store_close(s);
+}
+static uint32_t get32(const uint8_t *b) {
+ return (uint32_t)b[0]|((uint32_t)b[1]<<8)|((uint32_t)b[2]<<16)|((uint32_t)b[3]<<24);
+}
+static uint64_t get64(const uint8_t *b) {return get32(b)|((uint64_t)get32(b+4)<<32);}
+static uint32_t committed_offset(const char *id) {
+ const uint8_t *b=nor.bytes;
+ if(!memcmp(b+4096,"TRDIR002",8)&&get64(b+4096+16)>get64(b+16))b+=4096;
+ CHECK(!memcmp(b,"TRDIR002",8)&&get32(b+8)==2);
+ for(uint32_t i=0;i<get32(b+12);i++)if(!strcmp((const char*)b+32+80*i,id))return get32(b+32+80*i+36);
+ CHECK(0);return 0;
+}
+static void test_extent_first_fit_and_quarantine(void) {
+ fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_app_info_t a=install_package(s,"a",1,300),b=install_package(s,"b",1,4097);
+ (void)install_package(s,"c",1,300);
+ CHECK(committed_offset("a")==0x2000 && committed_offset("b")==0x3000 && committed_offset("c")==0x5000);
+ CHECK(tinyrt_store_uninstall(s,b.id.app_id)==TINYRT_OK);
+ (void)install_package(s,"d",1,4096);CHECK(committed_offset("d")==0x3000);
+ nor.bytes[0x2000+100]^=1;CHECK(tinyrt_store_recheck(s,&a.id)==TINYRT_VERIFY_FAILED);
+ (void)install_package(s,"e",1,300);CHECK(committed_offset("e")==0x4000);
+ CHECK(nor.bytes[0x2000+100]!=pkg[100]);
+ tinyrt_store_stats_t stats;unsigned mutations=nor.mutations;
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.installed_count==4&&stats.quarantined_count==1);
+ CHECK(stats.package_bytes==4996&&stats.allocated_bytes==16384&&nor.mutations==mutations);
+ tinyrt_store_close(s);
+}
+static void test_full_store_and_fragmented_staging(void) {
+ fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_app_info_t a=install_package(s,"a",1,0x100000);
+ (void)install_package(s,"b",1,0x100000);(void)install_package(s,"c",1,0x100000);
+ (void)install_package(s,"d",1,0x100000);(void)install_package(s,"tail",1,0xDE000);
+ CHECK(committed_offset("tail")==0x402000);
+ tinyrt_store_stats_t stats;
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==0&&stats.largest_free_bytes==0);
+ CHECK(stats.allocated_bytes==0x4DE000&&stats.package_bytes==stats.allocated_bytes);
+ tinyrt_app_info_t next,out;tinyrt_install_t *h=NULL;
+ test_package_make(pkg,0x100000,"a",2,31,&next);
+ unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_NO_SPACE && !h);
+ CHECK(nor.mutations==mutations && tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_uninstall(s,"b")==TINYRT_OK && tinyrt_store_uninstall(s,"d")==TINYRT_OK);
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==0x200000&&stats.largest_free_bytes==0x100000);
+ /* 2 MiB free in two separated 1 MiB holes cannot stage a 1.5 MiB update. */
+ test_package_make(pkg,0x180000,"a",2,31,&next);mutations=nor.mutations;
+ CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_NO_SPACE && !h && nor.mutations==mutations);
+ CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_uninstall(s,"c")==TINYRT_OK);
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==0x300000&&stats.largest_free_bytes==0x300000);
+ CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_OK);
+ CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_write(h,0,pkg,0x180000)==TINYRT_OK && tinyrt_store_commit(h)==TINYRT_OK);
+ tinyrt_store_abort(h);CHECK(committed_offset("a")==0x102000);
+ tinyrt_store_close(s);
+}
+static void test_two_maximum_packages_and_erase_failure(void) {
+ fake_nor_init(&nor);tinyrt_store_t*s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_app_info_t a=install_package(s,"large.a",1,0x200000);
+ (void)install_package(s,"large.b",1,0x200000);
+ CHECK(committed_offset("large.a")==0x2000 && committed_offset("large.b")==0x202000);
+ tinyrt_app_info_t next,out;tinyrt_install_t*h=NULL;
+ test_package_make(pkg,0x200000,"large.a",2,31,&next);
+ unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_NO_SPACE && !h);
+ CHECK(nor.mutations==mutations && tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_uninstall(s,"large.b")==TINYRT_OK);
+ fake_nor_reset_log(&nor);nor.fail_at=512;nor.partial_bytes=2048;nor.stay_on_after_failure=1;
+ CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_IO_ERROR && !h);
+ CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ fake_nor_reset_log(&nor);CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_OK);
+ CHECK(tinyrt_store_write(h,0,pkg,0x200000)==TINYRT_OK);
+ CHECK(tinyrt_store_commit(h)==TINYRT_OK);tinyrt_store_abort(h);
+ CHECK(tinyrt_store_query(s,&next.id,&out)==TINYRT_OK);tinyrt_store_close(s);
+}
+static void test_v2_structural_bounds_and_legacy_refusal(void) {
+ const uint32_t offsets[]={0,0x1000,0x2001,0x4E0000,0xfffff000};
+ for(unsigned i=0;i<sizeof(offsets)/sizeof(offsets[0]);i++) {
+  fake_nor_init(&nor);tinyrt_app_info_t a=fixture(0,"bad",1);unsigned index=0;
+  directory(0,1,&a,&index,1);put32(nor.bytes+32+36,offsets[i]);put32(nor.bytes+4088,crc32(nor.bytes,4088));
+  tinyrt_store_t*s=NULL;CHECK(open_store(&s)==TINYRT_CORRUPT && !s && !nor.mutations);
+ }
+ fake_nor_init(&nor);tinyrt_app_info_t a[3]={fixture(0,"a",1),fixture(1,"b",1),fixture(2,"c",1)};
+ unsigned indices[3]={0,1,2};a[1].package_size=4097;
+ directory(0,1,a,indices,3);tinyrt_store_t*s=NULL;
+ CHECK(open_store(&s)==TINYRT_CORRUPT); /* Rounded extent overlaps record 2, not record 0. */
+ a[1].package_size=300;a[2].id=a[1].id;directory(0,1,a,indices,3);
+ CHECK(open_store(&s)==TINYRT_CORRUPT);
+ a[2]=fixture(2,"c",1);a[2].package_size=0x200001;directory(0,1,a,indices,3);
+ CHECK(open_store(&s)==TINYRT_CORRUPT);
+ fake_nor_init(&nor);directory(0,1,NULL,NULL,0);put32(nor.bytes+12,17);put32(nor.bytes+4088,crc32(nor.bytes,4088));
+ CHECK(open_store(&s)==TINYRT_CORRUPT);
+ /* Independently encoded legacy empty directory must not be mistaken for a
+  * torn first-provisioning write, even when the other sector contains v2. */
+ fake_nor_init(&nor);directory(0,1,NULL,NULL,0);memcpy(nor.bytes,"TRDIR001",8);put32(nor.bytes+8,1);
+ put32(nor.bytes+4088,crc32(nor.bytes,4088));CHECK(open_store(&s)==TINYRT_CORRUPT);
+ directory(1,2,NULL,NULL,0);CHECK(open_store(&s)==TINYRT_CORRUPT && !nor.mutations);
+}
+static void test_inventory_revision(void) {
+ fake_nor_init(&nor);tinyrt_store_t*s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ uint64_t before=99,after=99;
+ CHECK(tinyrt_store_generation(s,&before)==TINYRT_OK && before==0 && !nor.mutations);
+ CHECK(tinyrt_store_generation(NULL,&after)==TINYRT_INVALID_ARGUMENT && after==0);
+ CHECK(tinyrt_store_generation(s,NULL)==TINYRT_INVALID_ARGUMENT);
+ tinyrt_app_info_t a=install_package(s,"a",1,300),b=install_package(s,"b",1,300);
+ CHECK(tinyrt_store_generation(s,&before)==TINYRT_OK && before>0);
+ tinyrt_install_t*h=NULL;unsigned mutations=nor.mutations;
+ CHECK(tinyrt_store_begin(s,&a,&h)==TINYRT_ALREADY_INSTALLED);
+ CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after==before && nor.mutations==mutations);
+ uint32_t ao=committed_offset("a"),bo=committed_offset("b");
+ nor.bytes[ao+100]^=1;CHECK(tinyrt_store_recheck(s,&a.id)==TINYRT_VERIFY_FAILED);
+ CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after>before);before=after;
+ /* Swap the sole quarantined member: count stays one but the token changes. */
+ nor.bytes[ao+100]^=1;nor.bytes[bo+100]^=1;
+ s->dirty=true;CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after>before);before=after;
+ tinyrt_app_info_t quarantined[16];uint32_t count=0;
+ CHECK(tinyrt_store_list_quarantined(s,quarantined,16,&count)==TINYRT_OK && count==1);
+ CHECK(!strcmp(quarantined[0].id.app_id,"b"));
+ s->dirty=true;CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after==before);
+ s->dirty=true;nor.fail_read=1;CHECK(tinyrt_store_generation(s,&after)==TINYRT_IO_ERROR && after==0);
+ nor.fail_read=0;CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after==before);
+ CHECK(nor.mutations==mutations);
+ /* A 64-bit lifetime cannot be exercised by looping; inject its boundary. */
+ s->revision=UINT64_MAX;nor.bytes[bo+100]^=1;
+ CHECK(tinyrt_store_recheck(s,&b.id)==TINYRT_CONFLICT);
+ CHECK(tinyrt_store_query(s,&b.id,quarantined)==TINYRT_VERIFY_FAILED);
+ CHECK(tinyrt_store_generation(s,&after)==TINYRT_OK && after==UINT64_MAX);
+ s->dirty=true;CHECK(tinyrt_store_generation(s,&after)==TINYRT_CONFLICT && after==0);
+ CHECK(s->directory.records[1].quarantined && nor.mutations==mutations);
+ tinyrt_store_close(s);
+}
+static void test_storage_stats_failures_and_staging(void) {
+ fake_nor_init(&nor);tinyrt_store_t*s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_store_stats_t stats,zero={0};
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.generation==0);
+ CHECK(stats.total_bytes==0x4E0000&&stats.data_bytes==0x4DE000);
+ CHECK(stats.free_bytes==0x4DE000&&stats.largest_free_bytes==0x4DE000);
+ CHECK(stats.package_bytes==0&&stats.allocated_bytes==0&&stats.installed_count==0&&stats.quarantined_count==0);
+ CHECK(stats.max_apps==16&&stats.max_package_size==0x200000&&!nor.mutations);
+ memset(&stats,0xa5,sizeof(stats));
+ CHECK(tinyrt_store_stats(NULL,&stats)==TINYRT_INVALID_ARGUMENT&&!memcmp(&stats,&zero,sizeof(stats)));
+ CHECK(tinyrt_store_stats(s,NULL)==TINYRT_INVALID_ARGUMENT);
+ tinyrt_app_info_t app;test_package_make(pkg,4097,"stats",1,31,&app);tinyrt_install_t*h=NULL;
+ CHECK(tinyrt_store_begin(s,&app,&h)==TINYRT_OK);
+ unsigned mutations=nor.mutations;memset(&stats,0xa5,sizeof(stats));
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_BUSY&&!memcmp(&stats,&zero,sizeof(stats))&&nor.mutations==mutations);
+ CHECK(tinyrt_store_write(h,0,pkg,4097)==TINYRT_OK&&tinyrt_store_commit(h)==TINYRT_OK);
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_BUSY); /* Handle owns staging until abort. */
+ tinyrt_store_abort(h);uint64_t revision=0;
+ CHECK(tinyrt_store_generation(s,&revision)==TINYRT_OK);
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.generation==revision&&stats.package_bytes==4097&&stats.allocated_bytes==8192);
+ mutations=nor.mutations;s->dirty=true;nor.fail_read=1;memset(&stats,0xa5,sizeof(stats));
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_IO_ERROR&&!memcmp(&stats,&zero,sizeof(stats)));
+ nor.fail_read=0;CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.generation==revision&&nor.mutations==mutations);
+ CHECK(tinyrt_store_uninstall(s,"stats")==TINYRT_OK);
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==stats.data_bytes&&stats.largest_free_bytes==stats.data_bytes);
+ tinyrt_store_close(s);
 }
 static void test_install_update_reopen(void) {
  fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
@@ -206,9 +381,12 @@ static void test_capacity_version_and_order(void) {
  fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
  tinyrt_app_info_t a=install_package(s,"a",2,300);
  (void)install_package(s,"b",1,300);
+ for(unsigned i=2;i<TINYRT_STORE_MAX_APPS;i++) {
+  char id[32];snprintf(id,sizeof(id),"filler.%u",i);(void)install_package(s,id,1,300);
+ }
  tinyrt_app_info_t c;test_package_make(pkg,300,"c",1,1,&c);tinyrt_install_t *h=NULL;
  unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_NO_SPACE);
- c=a;c.package_size=TINYRT_STORE_SLOT_SIZE+1;
+ c=a;c.package_size=TINYRT_STORE_MAX_PACKAGE_SIZE+1;
  CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_INVALID_ARGUMENT);
  c=a;c.id.version=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
  c=a;c.id.sha256[0]^=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
@@ -237,7 +415,7 @@ static void test_verify_failure_and_uninstall(void) {
 }
 static void test_maximum_package_and_generation(void) {
  fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
- tinyrt_app_info_t a=install_package(s,"max",1,TINYRT_STORE_SLOT_SIZE),out;
+ tinyrt_app_info_t a=install_package(s,"max",1,TINYRT_STORE_MAX_PACKAGE_SIZE),out;
  tinyrt_store_close(s);CHECK(open_store(&s)==TINYRT_OK);
  CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);tinyrt_store_close(s);
  fake_nor_init(&nor);a=fixture(0,"app",1);unsigned slot=0;directory(0,UINT64_MAX,&a,&slot,1);
@@ -345,7 +523,7 @@ static void test_recovery_read_failure_blocks_mutation(void) {
 static void test_reference_io_error_not_fallback(void) {
  fake_nor_init(&nor);tinyrt_app_info_t a1=fixture(0,"app",1),a2=fixture(1,"app",2);unsigned slot=0;
  directory(0,1,&a1,&slot,1);slot=1;directory(1,2,&a2,&slot,1);
- nor.fail_read_offset=slot_off(1);
+ nor.fail_read_offset=fixture_offset(1);
  tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_IO_ERROR && s==NULL);CHECK(nor.mutations==0);
 }
 static void test_stale_directory_is_not_snapshot(void) {
@@ -366,7 +544,7 @@ static void test_stale_directory_is_not_snapshot(void) {
 static void test_initial_recovery_is_narrow(void) {
  fake_nor_init(&nor);nor.bytes[0]=0;tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_CORRUPT);
  fake_nor_init(&nor);nor.bytes[4096]=0;CHECK(open_store(&s)==TINYRT_CORRUPT);
- fake_nor_init(&nor);nor.bytes[slot_off(2)+100]=0;CHECK(open_store(&s)==TINYRT_CORRUPT);
+ fake_nor_init(&nor);nor.bytes[fixture_offset(2)+100]=0;CHECK(open_store(&s)==TINYRT_CORRUPT);
  CHECK(nor.mutations==0);
 }
 
@@ -430,6 +608,10 @@ static void test_read_identity_and_install_exclusion(void) {
 }
 
 int main(void) {
+    RUN(test_sixteen_independent_apps);
+    RUN(test_extent_first_fit_and_quarantine);RUN(test_full_store_and_fragmented_staging);
+    RUN(test_two_maximum_packages_and_erase_failure);RUN(test_v2_structural_bounds_and_legacy_refusal);
+    RUN(test_inventory_revision);RUN(test_storage_stats_failures_and_staging);
     RUN(test_quarantine_keeps_newest_directory); RUN(test_quarantine_does_not_rollback_version);
     RUN(test_resource_failure_is_not_quarantine);
     RUN(test_committed_read); RUN(test_read_identity_and_install_exclusion);

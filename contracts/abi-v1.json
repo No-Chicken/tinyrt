@@ -3,6 +3,11 @@
   "module": "tinyrt",
   "imports": [
     {
+      "name": "clock_interval",
+      "signature": "(i)i",
+      "permission": 8
+    },
+    {
       "name": "draw_arc",
       "signature": "(iiiiiii)i",
       "permission": 1
@@ -18,8 +23,18 @@
       "permission": 1
     },
     {
+      "name": "draw_rgb565",
+      "signature": "(iiiiii)i",
+      "permission": 1
+    },
+    {
       "name": "draw_round_rect",
       "signature": "(iiiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "draw_skip",
+      "signature": "()i",
       "permission": 1
     },
     {
@@ -90,6 +105,24 @@
       "right": 2
     },
     "text_box": "single line, vertically centered, clipped to its rectangle",
-    "arc": "outer radius; 0 degrees right, clockwise; 0 <= start <= end <= 360; full 0..360; equal angles empty"
+    "arc": "outer radius; 0 degrees right, clockwise; 0 <= start <= end <= 360; full 0..360; equal angles empty",
+    "rgb565": {
+      "max_images": 1,
+      "max_width": 256,
+      "max_height": 240,
+      "max_bytes": 122880,
+      "format": "RGB565 little-endian packed bytes, owned copy, no scaling"
+    },
+    "skip": "DRAW/render only, sole render operation, preserves previous display; output count 0 invalidates other fields"
+  },
+  "clock": {
+    "default_interval_ms": 100,
+    "min_interval_ms": 1,
+    "max_interval_ms": 1000,
+    "stages": [
+      "init",
+      "event"
+    ],
+    "scheduling": "one next callback after completion, no catch-up loop"
   }
 }

@@ -4,7 +4,7 @@
 #include <string.h>
 static unsigned checks, failures;
 #define CHECK(x) do { ++checks; if (!(x)) { ++failures; fprintf(stderr,"FAIL %s:%d %s\n",__FILE__,__LINE__,#x); } } while(0)
-static uint8_t data[TINYRT_STORE_SLOT_SIZE+512];
+static uint8_t data[TINYRT_STORE_MAX_PACKAGE_SIZE+512];
 static uint32_t data_size,read_calls,fail_read,bad_reads,wasm_calls;
 static tinyrt_status_t wasm_result;
 static const uint32_t base=17;
@@ -57,6 +57,7 @@ int main(int argc,char **argv) {
         char file[64]; snprintf(file,sizeof(file),"%s.pkg",valid_names[k]); fixture(argv[1],file);
         CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
         CHECK(metadata.app.package_size==data_size && metadata.wasm_size==15 && !bad_reads);
+        if(k==1)CHECK(data_size==0x200000);
         snprintf(file,sizeof(file),"%s.sha256",valid_names[k]); CHECK(load(argv[1],file,expected,32)==32);
         CHECK(!memcmp(metadata.app.id.sha256,expected,32));
     }
@@ -133,7 +134,7 @@ int main(int argc,char **argv) {
     uint32_t reads_before=read_calls;
     CHECK(tinyrt_package_inspect(&config,&io,UINT32_MAX-20,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     CHECK(read_calls==reads_before);
-    CHECK(tinyrt_package_inspect(&config,&io,base,TINYRT_STORE_SLOT_SIZE+1,&metadata)==TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_package_inspect(&config,&io,base,TINYRT_STORE_MAX_PACKAGE_SIZE+1,&metadata)==TINYRT_VERIFY_FAILED);
     CHECK(read_calls==reads_before);
     CHECK(tinyrt_package_inspect(NULL,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     CHECK(tinyrt_package_inspect(&config,NULL,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);

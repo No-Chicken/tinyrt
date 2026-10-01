@@ -8,6 +8,7 @@ unsigned runtime_destroy_count;
 int runtime_fail_event;
 int runtime_stop_write;
 int runtime_skip_write;
+int runtime_skip_frame;
 int metadata_swap;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -36,8 +37,12 @@ tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,
  return runtime_fail_event?TINYRT_VERIFY_FAILED:s;
 }
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r,tinyrt_frame_t *out) {
+ if(runtime_skip_frame){out->count=0;return TINYRT_OK;}
  memset(out,0,sizeof(*out));out->count=1;out->commands[0].kind=TINYRT_DRAW_CLEAR;
  out->commands[0].rgb=(uint32_t)r->host.kv_get(r->host.ctx,0,0);return TINYRT_OK;
 }
+uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r) {return r?17:100;}
+size_t tinyrt_runtime_memory_used(void) {return runtime_live?256:0;}
+size_t tinyrt_runtime_memory_peak(void) {return 256;}
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r) {(void)r;return "test guest failure";}
 void tinyrt_runtime_destroy(tinyrt_runtime_t *r) {if(r){runtime_destroy_count++;runtime_live=0;free(r);}}

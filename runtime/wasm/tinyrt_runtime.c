@@ -16,10 +16,11 @@ typedef union {
 #endif
     struct { size_t size; } value;
 } allocation_t;
-static size_t allocated;
+static size_t allocated,peak_allocated;
 static bool initialized, allocation_failed;
 static unsigned live_instances;
 size_t tinyrt_runtime_memory_used(void) { return allocated; }
+size_t tinyrt_runtime_memory_peak(void) { return peak_allocated; }
 
 static void *allocate(unsigned int n)
 {
@@ -31,6 +32,7 @@ static void *allocate(unsigned int n)
     if (!h) { allocation_failed = true; return NULL; }
     h->value.size = n;
     allocated += n;
+    if(allocated>peak_allocated) peak_allocated=allocated;
     return h + 1;
 }
 static void release(void *p)
@@ -74,7 +76,8 @@ struct tinyrt_runtime {
     tinyrt_runtime_host_t host;
     tinyrt_frame_t frame;
     int32_t width, height;
-    bool ready, rendering, failed, stopped;
+    uint32_t clock_interval_ms, callback;
+    bool ready, rendering, failed, stopped, skipped;
     char error[192];
 };
 
@@ -118,6 +121,7 @@ static tinyrt_draw_command_t *command(tinyrt_runtime_t *r, uint32_t kind)
 {
     if (!permission(r, TINYRT_PERMISSION_DRAW)) return NULL;
     if (!r->rendering) { fail(r, "draw outside render"); return NULL; }
+    if (r->skipped) { fail(r, "draw after skip"); return NULL; }
     if (r->frame.count >= TINYRT_FRAME_MAX_COMMANDS) {
         fail(r, "frame command limit exceeded"); return NULL;
     }
@@ -207,6 +211,40 @@ static int32_t draw_text_box(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w,
     memcpy(c->text,p,len);
     return 0;
 }
+static int32_t draw_rgb565(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, int32_t h,
+                           uint32_t ptr, uint32_t len)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_DRAW)) return -1;
+    if (!r->rendering || r->skipped) return fail(r,"pixels outside drawing render");
+    /* Bound dimensions before multiplication; negative i32/large u32 bit
+     * patterns must never wrap into a small copy length. */
+    if (!rectangle(r,x,y,w,h) || w>256 || h>240 || len!=(uint32_t)w*(uint32_t)h*2u)
+        return fail(r,"pixel bounds or length invalid");
+    if (r->frame.pixel_bytes) return fail(r,"one image per frame");
+    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
+    const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if (!p) return fail(r,"pixel memory unavailable");
+    tinyrt_draw_command_t *c=command(r,TINYRT_DRAW_RGB565);
+    if (!c) return -1;
+    c->x=x;c->y=y;c->w=w;c->h=h;
+    memcpy(r->frame.pixels,p,len);r->frame.pixel_bytes=len;
+    return 0;
+}
+static int32_t draw_skip(wasm_exec_env_t e)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_DRAW)) return -1;
+    if (!r->rendering || r->frame.count || r->skipped) return fail(r,"skip must be the only render operation");
+    r->skipped=true;return 0;
+}
+static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_CLOCK)) return -1;
+    if (r->callback>1 || ms<1 || ms>1000) return fail(r,"clock interval or callback invalid");
+    r->clock_interval_ms=(uint32_t)ms;return 0;
+}
 static int32_t kv_get(wasm_exec_env_t e, uint32_t key, int32_t fallback)
 {
     tinyrt_runtime_t *r = context(e);
@@ -232,24 +270,28 @@ static uint32_t now_ms(wasm_exec_env_t e)
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
 static NativeSymbol natives[] = {
+    { "clock_interval", (void *)clock_interval, "(i)i", NULL },
     { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
     { "draw_rect", (void *)draw_rect, "(iiiii)i", NULL },
+    { "draw_rgb565", (void *)draw_rgb565, "(iiiiii)i", NULL },
     { "draw_round_rect", (void *)draw_round_rect, "(iiiiii)i", NULL },
+    { "draw_skip", (void *)draw_skip, "()i", NULL },
     { "draw_text", (void *)draw_text, "(iiiii)i", NULL },
     { "draw_text_box", (void *)draw_text_box, "(iiiiiiiii)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL }
 };
-static const unsigned arity[] = { 7, 1, 5, 6, 5, 9, 2, 2, 0 };
-static const uint32_t required_permission[] = { 1, 1, 1, 1, 1, 1, 4, 4, 8 };
+static const unsigned arity[] = { 1, 7, 1, 5, 6, 6, 0, 5, 9, 2, 2, 0 };
+static const uint32_t required_permission[] = { 8, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 8 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
 tinyrt_status_t tinyrt_runtime_system_init(void)
 {
     if (initialized) return TINYRT_OK;
+    peak_allocated=allocated;
     allocation_failed = false;
     RuntimeInitArgs args = { 0 };
     args.mem_alloc_type = Alloc_With_Allocator;
@@ -295,7 +337,7 @@ static bool policy_valid(const tinyrt_package_policy_t *p)
 static bool preflight(const uint8_t *bytes, uint32_t size, const tinyrt_package_policy_t *p)
 {
     static const uint8_t magic[] = { 0, 'a', 's', 'm', 1, 0, 0, 0 };
-    if (!policy_valid(p) || size < 8 || size > TINYRT_STORE_SLOT_SIZE || memcmp(bytes, magic, 8)) return false;
+    if (!policy_valid(p) || size < 8 || size > TINYRT_STORE_MAX_PACKAGE_SIZE || memcmp(bytes, magic, 8)) return false;
     reader_t r = { bytes + 8, bytes + size };
     bool memory_found = false;
     while (r.p < r.end) {
@@ -383,7 +425,7 @@ tinyrt_status_t tinyrt_runtime_validate_wasm(void *ctx, const tinyrt_store_io_t 
     (void)ctx;
     if (!initialized || !io || !io->read || !policy_valid(policy)) return TINYRT_INVALID_ARGUMENT;
     if (live_instances) return TINYRT_BUSY;
-    if (size < 8 || size > TINYRT_STORE_SLOT_SIZE || offset > UINT32_MAX - size) return TINYRT_VERIFY_FAILED;
+    if (size < 8 || size > TINYRT_STORE_MAX_PACKAGE_SIZE || offset > UINT32_MAX - size) return TINYRT_VERIFY_FAILED;
     uint8_t *bytes = allocate(size);
     if (!bytes) return TINYRT_NO_MEMORY;
     tinyrt_status_t status = TINYRT_OK;
@@ -424,6 +466,7 @@ tinyrt_status_t tinyrt_runtime_create(const void *bytes, uint32_t size,
     live_instances++;
     r->policy = *policy;
     r->host = *host;
+    r->clock_interval_ms=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;r->callback=UINT32_MAX;
     r->bytes = allocate(size);
     if (!r->bytes) { tinyrt_runtime_destroy(r); return TINYRT_NO_MEMORY; }
     memcpy(r->bytes, bytes, size);
@@ -447,7 +490,9 @@ static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t a
 {
     if (r->failed) return TINYRT_VERIFY_FAILED;
     wasm_runtime_set_instruction_count_limit(r->env, r->policy.instruction_budget);
+    r->callback=function;
     bool ok = wasm_runtime_call_wasm(r->env, r->functions[function], argc, argv);
+    r->callback=UINT32_MAX;
     if (!ok || r->failed || (int32_t)argv[0] != 0) {
         const char *exception = wasm_runtime_get_exception(r->instance);
         if (!r->failed) snprintf(r->error, sizeof(r->error), "%s", exception ? exception : "guest returned failure");
@@ -489,17 +534,25 @@ tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
 {
     if (!r || !out || !r->ready || r->stopped) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
-    memset(&r->frame, 0, sizeof(r->frame));
+    r->frame.count=0;r->frame.pixel_bytes=0;r->skipped=false;
+    memset(r->frame.commands,0,sizeof(r->frame.commands));
     r->rendering = true;
     uint32_t argv[1] = { 0 };
     tinyrt_status_t status = invoke(r, 2, 0, argv);
     r->rendering = false;
-    if (status == TINYRT_OK && !r->frame.count) {
+    if (status == TINYRT_OK && !r->frame.count && !r->skipped) {
         fail(r, "empty frame");
         return TINYRT_VERIFY_FAILED;
     }
-    if (status == TINYRT_OK) *out = r->frame;
+    if (status == TINYRT_OK) {
+        if(r->skipped) out->count=0;
+        else *out=r->frame;
+    }
     return status;
+}
+uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r)
+{
+    return r && r->ready && !r->failed && !r->stopped ? r->clock_interval_ms : TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 }
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r)
 {

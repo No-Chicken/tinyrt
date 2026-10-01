@@ -112,7 +112,7 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     if(!v || !io || !io->read || !v->validate_wasm ||
        (v->trusted_key_count && !v->trusted_keys) || length>UINT32_MAX-off)
         return TINYRT_INVALID_ARGUMENT;
-    if(length<256 || length>TINYRT_STORE_SLOT_SIZE) return TINYRT_VERIFY_FAILED;
+    if(length<256 || length>TINYRT_STORE_MAX_PACKAGE_SIZE) return TINYRT_VERIFY_FAILED;
     uint8_t header[256],digest[32];
     tinyrt_status_t r=io->read(io->ctx,off,header,sizeof(header));
     if(r!=TINYRT_OK) return r;

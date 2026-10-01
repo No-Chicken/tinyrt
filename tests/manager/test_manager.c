@@ -14,6 +14,7 @@ static uint8_t package[400];
 static tinyrt_frame_t frame;
 extern unsigned runtime_destroy_count;
 extern int runtime_fail_event;
+extern int runtime_stop_write;
 extern int metadata_swap;
 static tinyrt_status_t load(void*c,const char*id,uint32_t*m,int32_t v[16]) {(void)c;(void)id;*m=kv_mask;memcpy(v,kv_values,sizeof(kv_values));return TINYRT_OK;}
 static tinyrt_status_t save(void*c,const char*id,uint32_t m,const int32_t v[16]) {(void)c;(void)id;if(fail_save)return TINYRT_IO_ERROR;kv_mask=m;memcpy(kv_values,v,sizeof(kv_values));saves++;return TINYRT_OK;}
@@ -31,6 +32,13 @@ static tinyrt_app_info_t install(tinyrt_manager_t*m,uint32_t version) {
  CHECK(tinyrt_manager_finish(m)==TINYRT_OK);return a;
 }
 int main(void) {
+ fake_nor_init(&nor);tinyrt_manager_t*stop_test=open_manager();
+ tinyrt_app_info_t stopped=install(stop_test,1);
+ CHECK(tinyrt_manager_start(stop_test,&stopped.id,466,466,&frame)==TINYRT_OK);
+ runtime_stop_write=1;tinyrt_manager_stop(stop_test);
+ CHECK(kv_mask==1&&kv_values[0]==77&&saves==1);
+ runtime_stop_write=0;tinyrt_manager_close(stop_test);
+ clears=0;saves=0;runtime_destroy_count=0;
  fake_nor_init(&nor);tinyrt_manager_t*m=open_manager();
  kv_mask=1;kv_values[0]=999;tinyrt_app_info_t a=install(m,1);
  CHECK(clears==1&&kv_mask==0);

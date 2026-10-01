@@ -63,7 +63,7 @@ tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *io, const tinyrt_pa
     *out = m;
     return TINYRT_OK;
 }
-void tinyrt_manager_stop(tinyrt_manager_t *m) {
+static void destroy_runtime(tinyrt_manager_t *m) {
     if (!m)
         return;
     tinyrt_runtime_destroy(m->runtime);
@@ -71,6 +71,23 @@ void tinyrt_manager_stop(tinyrt_manager_t *m) {
     memset(&m->running, 0, sizeof(m->running));
     m->mask = 0;
     memset(m->values, 0, sizeof(m->values));
+}
+tinyrt_status_t tinyrt_manager_stop(tinyrt_manager_t *m) {
+    if (!m)
+        return TINYRT_INVALID_ARGUMENT;
+    if (!m->runtime)
+        return TINYRT_OK;
+    uint32_t mask = m->mask;
+    int32_t old[16];
+    memcpy(old, m->values, sizeof(old));
+    tinyrt_status_t r = tinyrt_runtime_stop(m->runtime);
+    const char *detail = r == TINYRT_OK ? "stop persistence failed" : tinyrt_runtime_last_error(m->runtime);
+    if (r == TINYRT_OK && (m->mask != mask || memcmp(m->values, old, sizeof(old))))
+        r = m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    if (r != TINYRT_OK)
+        snprintf(m->error, sizeof(m->error), "%s (status=%d)", detail && *detail ? detail : "application stop failed", r);
+    destroy_runtime(m);
+    return r;
 }
 void tinyrt_manager_abort(tinyrt_manager_t *m) {
     if (!m)
@@ -82,7 +99,7 @@ void tinyrt_manager_abort(tinyrt_manager_t *m) {
 void tinyrt_manager_close(tinyrt_manager_t *m) {
     if (!m)
         return;
-    tinyrt_manager_stop(m);
+    (void)tinyrt_manager_stop(m);
     tinyrt_manager_abort(m);
     tinyrt_store_close(m->store);
     free(m);
@@ -159,7 +176,9 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
         }
     if (!update && count >= 2)
         return TINYRT_NO_SPACE;
-    tinyrt_manager_stop(m);
+    r = tinyrt_manager_stop(m);
+    if (r != TINYRT_OK)
+        return r;
     /* Clear before NEW install, not after. Interrupted uninstall cleanup or a
      * failed prior first install can never expose old data after reinstallation. */
     if (!update) {
@@ -197,7 +216,9 @@ tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *m, const tinyrt_packa
     tinyrt_status_t r = tinyrt_store_query(m->store, id, &a);
     if (r != TINYRT_OK)
         return r;
-    tinyrt_manager_stop(m);
+    r = tinyrt_manager_stop(m);
+    if (r != TINYRT_OK)
+        return r;
     m->catalog_valid = false;
     r = tinyrt_store_uninstall(m->store, a.id.app_id);
     /* Catalog commit determines uninstall. New installation always clears data
@@ -226,7 +247,7 @@ static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     const char *detail = m->runtime ? tinyrt_runtime_last_error(m->runtime) : NULL;
     snprintf(m->error, sizeof(m->error), "%s (status=%d)", detail && *detail ? detail : "application failed",
              r);
-    tinyrt_manager_stop(m);
+    destroy_runtime(m); /* A poisoned instance must never receive another call. */
     return r;
 }
 static tinyrt_status_t finish_call(tinyrt_manager_t *m, uint32_t mask, const int32_t old[16],
@@ -249,7 +270,9 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     tinyrt_status_t r = tinyrt_store_query(m->store, id, &a);
     if (r != TINYRT_OK)
         return r;
-    tinyrt_manager_stop(m);
+    r = tinyrt_manager_stop(m);
+    if (r != TINYRT_OK)
+        return r;
     m->error[0] = 0;
     tinyrt_package_metadata_t all[2], meta = {0};
     uint32_t count = 0;

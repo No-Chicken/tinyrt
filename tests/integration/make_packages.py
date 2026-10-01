@@ -8,6 +8,7 @@ sys.path.insert(0,str(ROOT/"tests/fixtures"))
 from reference_package import encode
 sys.path.insert(0,str(ROOT/"tests/runtime"))
 from make_fixtures import module
+from make_round_fixtures import fixtures as round_fixtures
 def u(n):
     out=bytearray()
     while n>=128: out.append((n&127)|128); n>>=7
@@ -45,11 +46,15 @@ def main(folder):
           ("counter-v2",ROOT/"tests/fixtures/guests/counter-v2.wasm","demo.counter",2),
           ("counter-error",error,"demo.counter",3),
           ("invalid-wasm",unknown,"demo.invalid",1)]
+    rounds=round_fixtures()
+    for version,name in enumerate(("stop_valid","stop_failure","stop_trap","stop_spin","stop_bad_signature"),1):
+        wasm=folder/(name+".wasm");wasm.write_bytes(rounds[name])
+        jobs.append((name,wasm,"demo.stop",version))
     for name,wasm,app_id,version in jobs:
         output=folder/(name+".trpkg")
         output.write_bytes(encode(wasm.read_bytes(),app_id=app_id,title=name,version=version))
         identity(output)
     bad=bytearray((folder/"counter-v2.trpkg").read_bytes()); bad[200]^=1
     output=folder/"invalid-signature.trpkg"; output.write_bytes(bad); identity(output)
-    print("INTEGRATION fixtures=5 real P256 packages; public test key_id=1")
+    print(f"INTEGRATION fixtures={len(jobs)+1} real P256 packages; public test key_id=1")
 if __name__=="__main__": main(Path(sys.argv[1]))

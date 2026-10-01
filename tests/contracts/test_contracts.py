@@ -33,6 +33,12 @@ class ContractTests(unittest.TestCase):
             self.assertEqual(arity, expected["signature"].split(")")[0].count("i"), name)
         for name, value in spec["events"].items():
             self.assertRegex(header, r"#define " + name + " " + str(value) + r"\b")
+        self.assertEqual([x["name"] for x in spec["exports"] if x.get("optional")], ["tinyrt_stop"])
+        for item in spec["exports"]:
+            declaration = re.search(r'int32_t ' + item["name"] + r'\(([^;]*)\);', header)
+            self.assertIsNotNone(declaration, item["name"])
+            args = declaration.group(1)
+            self.assertEqual(0 if args.strip() == "void" else args.count(",") + 1, item["arity"])
 
     def test_wire_constants_match_c_headers(self):
         path = ROOT / "contracts/wire-v1.json"

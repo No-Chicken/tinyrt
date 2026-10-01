@@ -6,6 +6,7 @@
 #include <string.h>
 unsigned runtime_destroy_count;
 int runtime_fail_event;
+int runtime_stop_write;
 int metadata_swap;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -22,6 +23,10 @@ tinyrt_status_t tinyrt_runtime_create(const void *b,uint32_t n,const tinyrt_pack
  (void)b;(void)n;(void)p;*out=calloc(1,sizeof(**out));if(!*out) return TINYRT_NO_MEMORY;(*out)->host=*h;runtime_live=1;return TINYRT_OK;
 }
 tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r,int32_t w,int32_t h) {(void)r;(void)w;(void)h;return TINYRT_OK;}
+tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r) {
+ if(runtime_stop_write)return r->host.kv_set(r->host.ctx,0,77);
+ return TINYRT_OK;
+}
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,int32_t y,int32_t arg) {
  (void)kind;(void)x;(void)y;(void)arg;
  int32_t old=r->host.kv_get(r->host.ctx,0,0);

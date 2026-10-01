@@ -42,6 +42,36 @@ Core tests use independent signed encoders and frozen C/Wasm regression guests,
 so building this checkout does not require the SDK, EEBadge or ESP-IDF.
 Product-side tests moved to EEBadge `esp32/tests/tinyrt`.
 
+## Optional round-screen drawing and normal stop
+
+ABI 1 now additionally accepts `draw_round_rect`, `draw_arc` and `draw_text_box`.
+Existing guests remain valid; new guests require a core revision supporting
+their imports, pinned by the SDK contract snapshot. Unknown imports remain a
+preflight rejection on older hosts. All drawing stays render-only, requires
+DRAW permission, copies values/text, and shares the 128-command limit. The
+expanded host frame is 14,340 bytes (previously 11,268); embedding products must
+budget for every frame copy. The core does not render pixels or choose fonts.
+Text boxes are single-line, clipped and vertically centered, with font sizes
+18/24/36/48 and left/center/right alignment. See the authoritative guest header
+for bounds and arc angle conventions.
+
+Guests may define `int32_t tinyrt_stop(void)`. The guarded export attribute in
+the header exports a definition on Wasm without requiring legacy guests to
+provide one. Validation checks the optional export's exact `()i` signature.
+Normal manager stop invokes it once after successful init, under the usual
+instruction budget, saves changed RAM KV only on success, and always destroys
+the instance. It does not render. Stop errors are returned and retained for
+the product to report; storage adapters must keep failed saves transactional.
+Failed callbacks, failed initialization and forced destruction never execute
+another guest callback. Old guests without this export stop as a no-op. The
+callback responds to host termination; it does not let a guest request exit.
+
+The raw-Wasm runner accepts `stop`; `restart` and clean stdin EOF also stop
+normally, while `reboot` forces destruction and resets the clock. Runner KV is
+RAM-only and rolls back on a failed stop. JSON frames include the new style
+fields. Runtime and signed integration tests execute optional-stop fixtures
+on the real pinned WAMR, including budget traps and storage failure injection.
+
 Current storage is an immutable package store plus sixteen i32 values per app.
 Package assets fields exist but there is no guest resource-read API or private
 file filesystem yet. Two apps and 296 KiB complete packages are current limits.

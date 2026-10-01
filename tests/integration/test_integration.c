@@ -151,6 +151,39 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK && count==1 && listed[0].app.id.version==1);
     CHECK(tinyrt_manager_start(m,&v1.id,466,466,&frame)==TINYRT_OK);
     counter_frame("COUNTER V1","0",0x181818);
+    /* Real signed optional-stop guests: no render, failed callback cannot
+     * persist its host RAM changes, and every outcome releases the instance. */
+    tinyrt_app_info_t stop=install(m,argv[1],"stop_valid",TINYRT_OK);
+    kv_record_t *stop_kv=record("demo.stop");unsigned stop_saves=saves;
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_OK);
+    CHECK(stop_kv->mask==0 && saves==stop_saves);
+    previous=frame;
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+    CHECK(stop_kv->mask==1 && stop_kv->values[0]==77 && saves==stop_saves+1);
+    CHECK(!memcmp(&frame,&previous,sizeof(frame)));
+    CHECK(tinyrt_manager_event(m,2,0,0,0,&frame)==TINYRT_NOT_FOUND);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK && saves==stop_saves+1);
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_OK);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK && saves==stop_saves+1); /* same value */
+    /* Simulated transactional NVS failure, including error preservation. */
+    stop_kv->values[0]=12;stop_saves=saves;
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_OK);
+    fail_save=true;
+    CHECK(tinyrt_manager_stop(m)==TINYRT_IO_ERROR);
+    CHECK(stop_kv->values[0]==12 && saves==stop_saves);
+    CHECK(strstr(tinyrt_manager_error(m),"persistence")!=NULL);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK && tinyrt_manager_error(m)[0]);fail_save=false;
+    const char *stop_errors[]={"stop_failure","stop_trap","stop_spin"};
+    for(unsigned i=0;i<3;++i){
+        stop=install(m,argv[1],stop_errors[i],TINYRT_OK);
+        CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_OK);
+        CHECK(tinyrt_manager_stop(m)==TINYRT_VERIFY_FAILED);
+        CHECK(stop_kv->values[0]==12 && saves==stop_saves);
+        CHECK(tinyrt_manager_error(m)[0]);
+        CHECK(tinyrt_manager_event(m,2,0,0,0,&frame)==TINYRT_NOT_FOUND);
+    }
+    (void)install(m,argv[1],"stop_bad_signature",TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_OK);
     tinyrt_manager_close(m); tinyrt_runtime_system_shutdown();
     CHECK(tinyrt_runtime_memory_used()==0);
     printf("INTEGRATION checks=%u PASS (real SHA256/P256/store/manager/WAMR; simulated NOR/KV)\n",checks);

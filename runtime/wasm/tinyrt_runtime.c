@@ -69,12 +69,12 @@ struct tinyrt_runtime {
     wasm_module_t module;
     wasm_module_inst_t instance;
     wasm_exec_env_t env;
-    wasm_function_inst_t functions[3];
+    wasm_function_inst_t functions[4];
     tinyrt_package_policy_t policy;
     tinyrt_runtime_host_t host;
     tinyrt_frame_t frame;
     int32_t width, height;
-    bool ready, rendering, failed;
+    bool ready, rendering, failed, stopped;
     char error[192];
 };
 
@@ -161,6 +161,52 @@ static int32_t draw_text(wasm_exec_env_t e, int32_t x, int32_t y, uint32_t ptr, 
     memcpy(c->text, p, len);
     return 0;
 }
+static bool rectangle(tinyrt_runtime_t *r, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+    return x >= 0 && y >= 0 && w > 0 && h > 0 && x < r->width && y < r->height
+        && w <= r->width - x && h <= r->height - y;
+}
+static int32_t draw_round_rect(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, int32_t h,
+                               int32_t radius, uint32_t rgb)
+{
+    tinyrt_runtime_t *r = context(e);
+    if (!rectangle(r,x,y,w,h) || radius < 0 || radius > w / 2 || radius > h / 2)
+        return fail(r, "rounded rectangle bounds or radius invalid");
+    tinyrt_draw_command_t *c = command(r,TINYRT_DRAW_ROUND_RECT);
+    if (!c) return -1;
+    c->x=x; c->y=y; c->w=w; c->h=h; c->radius=radius; c->rgb=rgb & 0xffffff;
+    return 0;
+}
+static int32_t draw_arc(wasm_exec_env_t e, int32_t x, int32_t y, int32_t radius,
+                       int32_t thickness, int32_t start, int32_t end, uint32_t rgb)
+{
+    tinyrt_runtime_t *r = context(e);
+    if (radius <= 0 || thickness <= 0 || thickness > radius || start < 0 || end < start || end > 360
+        || (int64_t)x-radius < 0 || (int64_t)y-radius < 0
+        || (int64_t)x+radius >= r->width || (int64_t)y+radius >= r->height)
+        return fail(r, "arc bounds or style invalid");
+    tinyrt_draw_command_t *c = command(r,TINYRT_DRAW_ARC);
+    if (!c) return -1;
+    c->x=x; c->y=y; c->radius=radius; c->thickness=thickness;
+    c->start_angle=start; c->end_angle=end; c->rgb=rgb & 0xffffff;
+    return 0;
+}
+static int32_t draw_text_box(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, int32_t h,
+                            uint32_t ptr, uint32_t len, uint32_t rgb, int32_t font, int32_t align)
+{
+    tinyrt_runtime_t *r = context(e);
+    if (!rectangle(r,x,y,w,h) || !len || len > TINYRT_TEXT_MAX_BYTES
+        || (font != 18 && font != 24 && font != 36 && font != 48) || align < 0 || align > 2)
+        return fail(r, "text box bounds or style invalid");
+    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"text memory out of bounds");
+    const uint8_t *p = wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if (!p || !utf8(p,len)) return fail(r,"text is not displayable UTF-8");
+    tinyrt_draw_command_t *c = command(r,TINYRT_DRAW_TEXT_BOX);
+    if (!c) return -1;
+    c->x=x; c->y=y; c->w=w; c->h=h; c->font_px=font; c->align=align; c->rgb=rgb & 0xffffff;
+    memcpy(c->text,p,len);
+    return 0;
+}
 static int32_t kv_get(wasm_exec_env_t e, uint32_t key, int32_t fallback)
 {
     tinyrt_runtime_t *r = context(e);
@@ -183,18 +229,23 @@ static uint32_t now_ms(wasm_exec_env_t e)
     if (!r->host.now_ms) { fail(r, "clock callback missing"); return 0; }
     return r->host.now_ms(r->host.ctx);
 }
+/* WAMR sorts this table in place. Keep lexical order so the parallel policy
+ * tables retain their association after native registration. */
 static NativeSymbol natives[] = {
+    { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
     { "draw_rect", (void *)draw_rect, "(iiiii)i", NULL },
+    { "draw_round_rect", (void *)draw_round_rect, "(iiiiii)i", NULL },
     { "draw_text", (void *)draw_text, "(iiiii)i", NULL },
+    { "draw_text_box", (void *)draw_text_box, "(iiiiiiiii)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL }
 };
-static const unsigned arity[] = { 1, 5, 5, 2, 2, 0 };
-static const uint32_t required_permission[] = { 1, 1, 1, 4, 4, 8 };
-static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render" };
-static const unsigned export_arity[] = { 2, 4, 0 };
+static const unsigned arity[] = { 7, 1, 5, 6, 5, 9, 2, 2, 0 };
+static const uint32_t required_permission[] = { 1, 1, 1, 1, 1, 1, 4, 4, 8 };
+static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
+static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
 tinyrt_status_t tinyrt_runtime_system_init(void)
 {
@@ -284,7 +335,7 @@ static bool signature(wasm_func_type_t type, unsigned parameters)
 static bool module_policy(wasm_module_t module, const tinyrt_package_policy_t *policy)
 {
     int32_t count = wasm_runtime_get_import_count(module);
-    if (count < 0 || count > 7) return false;
+    if (count < 0 || (unsigned)count > sizeof(natives) / sizeof(*natives)) return false;
     for (int32_t i = 0; i < count; i++) {
         wasm_import_t import;
         memset(&import, 0, sizeof(import));
@@ -304,13 +355,13 @@ static bool module_policy(wasm_module_t module, const tinyrt_package_policy_t *p
         memset(&ex, 0, sizeof(ex));
         wasm_runtime_get_export_type(module, i, &ex);
         if (!strcmp(ex.name, "__post_instantiate") || !strcmp(ex.name, "__wasm_call_ctors") || !strcmp(ex.name, "_initialize")) return false;
-        for (unsigned j = 0; j < 3; j++) {
+        for (unsigned j = 0; j < sizeof(exports) / sizeof(*exports); j++) {
             if (strcmp(ex.name, exports[j])) continue;
             if (ex.kind != WASM_IMPORT_EXPORT_KIND_FUNC || !signature(ex.u.func_type, export_arity[j])) return false;
             found |= 1u << j;
         }
     }
-    return found == 7;
+    return (found & 7u) == 7u; /* tinyrt_stop is optional; validate it when present. */
 }
 static tinyrt_status_t load_module(uint8_t *bytes, uint32_t size, const tinyrt_package_policy_t *p,
                                   wasm_module_t *module, char *error, uint32_t error_size)
@@ -387,7 +438,8 @@ tinyrt_status_t tinyrt_runtime_create(const void *bytes, uint32_t size,
         return status;
     }
     wasm_runtime_set_user_data(r->env, r);
-    for (unsigned i = 0; i < 3; i++) r->functions[i] = wasm_runtime_lookup_function(r->instance, exports[i]);
+    for (unsigned i = 0; i < sizeof(exports) / sizeof(*exports); i++)
+        r->functions[i] = wasm_runtime_lookup_function(r->instance, exports[i]);
     *out = r;
     return TINYRT_OK;
 }
@@ -415,16 +467,27 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || (kind != 1 && kind != 2)) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || (kind != 1 && kind != 2)) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     if (kind == 1 && (!(r->policy.permissions & TINYRT_PERMISSION_INPUT) || x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 2 && !(r->policy.permissions & TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
     uint32_t argv[] = { (uint32_t)kind, (uint32_t)x, (uint32_t)y, (uint32_t)arg };
     return invoke(r, 1, 4, argv);
 }
+tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r)
+{
+    if (!r) return TINYRT_INVALID_ARGUMENT;
+    if (r->failed) return TINYRT_VERIFY_FAILED;
+    if (!r->ready) return TINYRT_INVALID_ARGUMENT;
+    if (r->stopped) return TINYRT_OK;
+    r->stopped = true;
+    if (!r->functions[3]) return TINYRT_OK;
+    uint32_t argv[1] = { 0 };
+    return invoke(r,3,0,argv);
+}
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
 {
-    if (!r || !out || !r->ready) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !out || !r->ready || r->stopped) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     memset(&r->frame, 0, sizeof(r->frame));
     r->rendering = true;

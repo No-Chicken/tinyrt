@@ -8,11 +8,13 @@ extern "C" {
 #define TINYRT_TEXT_MAX_BYTES 63u
 #define TINYRT_RUNTIME_HEAP_LIMIT (2u * 1024u * 1024u)
 typedef struct tinyrt_runtime tinyrt_runtime_t;
-typedef enum { TINYRT_DRAW_CLEAR=1, TINYRT_DRAW_RECT=2, TINYRT_DRAW_TEXT=3 } tinyrt_draw_kind_t;
+typedef enum { TINYRT_DRAW_CLEAR=1, TINYRT_DRAW_RECT=2, TINYRT_DRAW_TEXT=3,
+    TINYRT_DRAW_ROUND_RECT=4, TINYRT_DRAW_ARC=5, TINYRT_DRAW_TEXT_BOX=6 } tinyrt_draw_kind_t;
 typedef struct {
     uint32_t kind;
     int32_t x, y, w, h;
     uint32_t rgb;
+    int32_t radius, thickness, start_angle, end_angle, font_px, align;
     char text[64];
 } tinyrt_draw_command_t;
 typedef struct { uint32_t count; tinyrt_draw_command_t commands[TINYRT_FRAME_MAX_COMMANDS]; } tinyrt_frame_t;
@@ -41,6 +43,10 @@ tinyrt_status_t tinyrt_runtime_create(const void *, uint32_t,
     const tinyrt_package_policy_t *, const tinyrt_runtime_host_t *, tinyrt_runtime_t **);
 tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *, int32_t width, int32_t height);
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *, int32_t kind, int32_t x, int32_t y, int32_t arg);
+/* Optional ()i export; absent is a no-op. Once successfully initialized, call
+ * at most once under the normal callback budget. No drawing; no calls after
+ * failure. Owner checkpoints/rolls back RAM KV and must destroy afterwards. */
+tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *);
 /* Complete deep copy only on success. Failure leaves output unchanged and
  * poisons the instance: only last_error/destroy remain valid. Every render
  * starts a fresh frame; first command must clear it, no retained guest pointer. */

@@ -59,8 +59,12 @@ static void emit(const char *phase, tinyrt_status_t status, const char *error, d
             const tinyrt_draw_command_t *c=&frame.commands[k];
             if (k) putchar(',');
             printf("{\"kind\":%" PRIu32 ",\"x\":%" PRId32 ",\"y\":%" PRId32
-                ",\"w\":%" PRId32 ",\"h\":%" PRId32 ",\"rgb\":%" PRIu32 ",\"text\":",
-                c->kind,c->x,c->y,c->w,c->h,c->rgb);
+                ",\"w\":%" PRId32 ",\"h\":%" PRId32 ",\"rgb\":%" PRIu32
+                ",\"radius\":%" PRId32 ",\"thickness\":%" PRId32
+                ",\"start_angle\":%" PRId32 ",\"end_angle\":%" PRId32
+                ",\"font_px\":%" PRId32 ",\"align\":%" PRId32 ",\"text\":",
+                c->kind,c->x,c->y,c->w,c->h,c->rgb,c->radius,c->thickness,
+                c->start_angle,c->end_angle,c->font_px,c->align);
             json_string(c->text); putchar('}');
         }
     }
@@ -83,10 +87,21 @@ static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
     emit(phase,result,result==TINYRT_OK ? "" : tinyrt_runtime_last_error(rt),milliseconds()-start);
     return result;
 }
+static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
+    saved_t before=saved; double start=milliseconds(); char error[192]="";
+    tinyrt_status_t result=*rt ? tinyrt_runtime_stop(*rt) : TINYRT_OK;
+    if (result!=TINYRT_OK) {
+        saved=before;
+        snprintf(error,sizeof(error),"%s",tinyrt_runtime_last_error(*rt));
+    } else if (memcmp(&saved,&before,sizeof(saved))) ++commits;
+    tinyrt_runtime_destroy(*rt); *rt=NULL; frame.count=0;
+    if (phase || result!=TINYRT_OK) emit(phase ? phase : "stop",result,error,milliseconds()-start);
+    return result;
+}
 static int usage(void) {
     fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..15]\n"
-        "stdin: tick <uint32_ms> | touch <x> <y> | restart | reboot\n"
-        "Emits JSON lines. KV is RAM-only, checkpointed per successful event+render.\n");
+        "stdin: tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
+        "KV is RAM-only. stop/restart/EOF stop normally; reboot forces teardown.\n");
     return 2;
 }
 int main(int argc, char **argv) {
@@ -129,16 +144,20 @@ int main(int argc, char **argv) {
         } else if (!strcmp(op,"touch") && parse_u32(a,&x) && parse_u32(b,&y) && !extra && x<466 && y<466) {
             result=cycle(rt,"touch",0,1,(int32_t)x,(int32_t)y,0);
         } else if ((!strcmp(op,"restart") || !strcmp(op,"reboot")) && !a) {
-            if (!strcmp(op,"reboot")) now_ms_value=0;
-            tinyrt_runtime_destroy(rt); rt=NULL;
+            if (!strcmp(op,"reboot")) {
+                now_ms_value=0; tinyrt_runtime_destroy(rt); rt=NULL;
+            } else if (stop_instance(&rt,NULL)!=TINYRT_OK) { exit_code=1; break; }
             result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
             if (result==TINYRT_OK) result=cycle(rt,op,1,0,466,466,0);
             else emit("create",result,"Wasm reload rejected",0);
+        } else if (!strcmp(op,"stop") && !a) {
+            result=stop_instance(&rt,"stop");
         } else { exit_code=usage(); break; }
         if (result!=TINYRT_OK) { exit_code=1; break; }
     }
     if (ferror(stdin)) exit_code=2;
 done:
+    if (!exit_code && rt && stop_instance(&rt,NULL)!=TINYRT_OK) exit_code=1;
     tinyrt_runtime_destroy(rt); tinyrt_runtime_system_shutdown(); free(bytes);
     if (tinyrt_runtime_memory_used()) exit_code=1;
     emit("shutdown",TINYRT_OK,"",0);

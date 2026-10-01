@@ -35,4 +35,36 @@ class Runner(unittest.TestCase):
         self.assertEqual(p.returncode,2)
         p,_=self.run_guest('valid','tick 4294967296\n')
         self.assertEqual(p.returncode,2)
+    def test_round_commands_preserve_style_in_json(self):
+        p,r=self.run_guest('round_valid')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        arc=r[0]['frame'][2]
+        self.assertEqual((arc.get('radius'),arc.get('thickness'),arc.get('start_angle'),arc.get('end_angle')),(200,12,0,360))
+        text=r[0]['frame'][3]
+        self.assertEqual((text.get('font_px'),text.get('align'),text['text']),(48,1,'TEXT'))
+    def test_normal_stop_and_restart_commit_without_render(self):
+        p,r=self.run_guest('stop_valid','stop\nrestart\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['phase'] for x in r],['init','stop','restart','shutdown'])
+        self.assertEqual(r[1]['kv'][0],77)
+        self.assertEqual(r[1]['frame'],[])
+        self.assertLess(r[1]['heap_bytes'],r[0]['heap_bytes'])
+        self.assertEqual(r[-1]['heap_bytes'],0)
+        self.assertEqual(r[-1]['commits'],1)
+        p,r=self.run_guest('stop_valid','restart\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual(r[1]['kv'][0],77)
+    def test_reboot_forces_destroy_but_eof_stops_normally(self):
+        p,r=self.run_guest('stop_valid','reboot\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertIsNone(r[1]['kv'][0])
+        self.assertEqual(r[-1]['kv'][0],77)
+        self.assertEqual(r[-1]['heap_bytes'],0)
+    def test_stop_trap_rolls_back_and_destroys(self):
+        p,r=self.run_guest('stop_trap','stop\n')
+        self.assertNotEqual(p.returncode,0)
+        self.assertEqual(r[-2]['phase'],'stop')
+        self.assertNotEqual(r[-2]['status'],0)
+        self.assertIsNone(r[-2]['kv'][0])
+        self.assertEqual(r[-1]['heap_bytes'],0)
 if __name__=='__main__':unittest.main()

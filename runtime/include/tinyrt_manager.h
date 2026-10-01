@@ -22,6 +22,9 @@ void tinyrt_manager_abort(tinyrt_manager_t *);
 tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *,const tinyrt_package_id_t *);
 tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *,const tinyrt_package_id_t *,int32_t width,int32_t height,tinyrt_frame_t *);
 tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *,int32_t kind,int32_t x,int32_t y,int32_t arg,tinyrt_frame_t *);
-void tinyrt_manager_stop(tinyrt_manager_t *);
+/* Normal stop: bounded optional guest callback, then persist changed KV without
+ * rendering. All outcomes destroy the instance; failure leaves durable KV
+ * unchanged if the storage adapter provides transactional save. Idempotent. */
+tinyrt_status_t tinyrt_manager_stop(tinyrt_manager_t *);
 const char *tinyrt_manager_error(const tinyrt_manager_t *);
 #endif

@@ -24,10 +24,13 @@ typedef struct {
 typedef struct {
     uint32_t key_id;
     uint8_t public_key[65]; /* SEC1 uncompressed P-256: 04 || X32 || Y32. */
+    const char *app_id_prefix; /* NULL/empty: all IDs; trailing '.': descendants;
+                               * otherwise one exact ID. Host-owned lifetime. */
 } tinyrt_package_trusted_key_t;
 /* Required: validate ABI exports, structure, imports and memory without running
  * guest code. Offset is absolute in io; policy is authenticated.
- * Preserve IO_ERROR, NO_MEMORY and BUSY. */
+ * Preserve IO_ERROR, NO_MEMORY, BUSY and host configuration/lifecycle
+ * INVALID_ARGUMENT. Invalid guest bytes must return VERIFY_FAILED. */
 typedef tinyrt_status_t (*tinyrt_package_wasm_validate_fn)(
     void *, const tinyrt_store_io_t *, uint32_t, uint32_t,
     const tinyrt_package_policy_t *);

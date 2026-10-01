@@ -3,6 +3,8 @@ import hashlib
 from pathlib import Path
 import struct
 import sys
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"tests/fixtures"))
 from reference_package import encode
@@ -47,6 +49,8 @@ def main(folder):
           ("counter-error",error,"demo.counter",3),
           ("invalid-wasm",unknown,"demo.invalid",1)]
     rounds=round_fixtures()
+    repair=folder/"stop_repair.wasm";repair.write_bytes(rounds["stop_valid"])
+    jobs.append(("stop_repair",repair,"demo.stop",6))
     for version,name in enumerate(("stop_valid","stop_failure","stop_trap","stop_spin","stop_bad_signature"),1):
         wasm=folder/(name+".wasm");wasm.write_bytes(rounds[name])
         jobs.append((name,wasm,"demo.stop",version))
@@ -56,5 +60,11 @@ def main(folder):
         identity(output)
     bad=bytearray((folder/"counter-v2.trpkg").read_bytes()); bad[200]^=1
     output=folder/"invalid-signature.trpkg"; output.write_bytes(bad); identity(output)
-    print(f"INTEGRATION fixtures={len(jobs)+1} real P256 packages; public test key_id=1")
+    output=folder/"counter-cross-publisher.trpkg"
+    output.write_bytes(encode((ROOT/"tests/fixtures/guests/counter-v2.wasm").read_bytes(),
+                             app_id="demo.counter",title="Foreign publisher",version=3,key_id=2,test_scalar=2))
+    identity(output)
+    (folder/"publisher2.bin").write_bytes(ec.derive_private_key(2,ec.SECP256R1()).public_key().public_bytes(
+        serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))
+    print(f"INTEGRATION fixtures={len(jobs)+2} real P256 packages; public test key_ids=1,2")
 if __name__=="__main__": main(Path(sys.argv[1]))

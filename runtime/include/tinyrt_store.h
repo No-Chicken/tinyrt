@@ -34,6 +34,17 @@ typedef tinyrt_status_t (*tinyrt_package_verify_fn)(void *, const tinyrt_store_i
 tinyrt_status_t tinyrt_store_open(const tinyrt_store_io_t *, tinyrt_package_verify_fn, void *, tinyrt_store_t **);
 void tinyrt_store_close(tinyrt_store_t *);
 tinyrt_status_t tinyrt_store_list(tinyrt_store_t *, tinyrt_app_info_t *, uint32_t, uint32_t *);
+/* Quarantine preserves the committed identity/slot and counts against capacity.
+ * Healthy list excludes these entries. Query/read return VERIFY_FAILED for an
+ * exact quarantined identity (zero query output), NOT_FOUND for stale identities.
+ * Reinstalling identical bytes repairs it; higher versions replace it normally.
+ * Uninstall remains available. This is RAM health derived on recovery; directory
+ * and package formats do not change and recovery never writes/erases bytes. */
+tinyrt_status_t tinyrt_store_list_quarantined(tinyrt_store_t *, tinyrt_app_info_t *, uint32_t, uint32_t *);
+/* Revalidate one exact committed identity and update its RAM health, without
+ * writing media. VERIFY_FAILED confirms quarantine; resource/configuration/IO
+ * errors preserve its previous health. Requires verifier resources to be idle. */
+tinyrt_status_t tinyrt_store_recheck(tinyrt_store_t *, const tinyrt_package_id_t *);
 tinyrt_status_t tinyrt_store_query(tinyrt_store_t *, const tinyrt_package_id_t *, tinyrt_app_info_t *);
 /* Read committed identity only; offsets are package-relative. Caller still
  * serializes all access and releases readers before mutations. Reads are

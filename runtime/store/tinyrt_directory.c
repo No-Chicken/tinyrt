@@ -101,23 +101,25 @@ tinyrt_status_t tr_recover(tinyrt_store_t *s) {
         result=s->io.read(s->io.ctx,sector*4096,b,4096);
         if(result!=TINYRT_OK) goto done;
         valid[sector]=decode(b,&d[sector]);
-        if(!valid[sector]) continue;
-        for(uint32_t i=0;i<d[sector].count;++i) {
-            tr_record_t *r=&d[sector].records[i];tinyrt_app_info_t actual={0};
-            result=s->verify(s->verify_ctx,&s->io,tr_slot_offset(r->slot),r->app.package_size,&actual);
-            if(result==TINYRT_VERIFY_FAILED||result==TINYRT_CORRUPT||result==TINYRT_INVALID_ARGUMENT) {
-                valid[sector]=false;result=TINYRT_OK;break;
-            }
-            /* Read or resource failure is not evidence of corrupted data. */
-            if(result!=TINYRT_OK) goto done;
-            if(!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&r->app)) {valid[sector]=false;break;}
-        }
     }
     if(valid[0]&&valid[1]&&d[0].generation==d[1].generation&&!directories_equal(&d[0],&d[1])) {
         result=TINYRT_CORRUPT;goto done;
     }
     if(valid[0]||valid[1]) {
         unsigned pick=valid[1]&&(!valid[0]||d[1].generation>d[0].generation)?1u:0u;
+        /* Commit history is selected solely from directory structure. A bad
+         * app must never resurrect an uninstalled app or roll back an update. */
+        for(uint32_t i=0;i<d[pick].count;++i) {
+            tr_record_t *r=&d[pick].records[i];tinyrt_app_info_t actual={0};
+            result=s->verify(s->verify_ctx,&s->io,tr_slot_offset(r->slot),r->app.package_size,&actual);
+            if(result==TINYRT_VERIFY_FAILED||result==TINYRT_CORRUPT) {
+                r->quarantined=true;result=TINYRT_OK;continue;
+            }
+            /* Resource, IO, busy and verifier configuration errors are not
+             * evidence against an installed package. Publish no partial RAM. */
+            if(result!=TINYRT_OK) goto done;
+            r->quarantined=!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&r->app);
+        }
         s->directory=d[pick];s->active_sector=(int)pick;
     } else result=initial_state(s,b);
 done:

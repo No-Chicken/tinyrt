@@ -2,7 +2,8 @@
 #define TINYRT_STORE_INTERNAL_H
 #include "tinyrt_store.h"
 #include <stdbool.h>
-typedef struct { tinyrt_app_info_t app; uint32_t slot; } tr_record_t;
+/* Health is derived on recovery, never serialized into TRDIR001. */
+typedef struct { tinyrt_app_info_t app; uint32_t slot; bool quarantined; } tr_record_t;
 typedef struct { uint64_t generation; uint32_t count; tr_record_t records[2]; } tr_directory_t;
 struct tinyrt_store {
     tinyrt_store_io_t io;

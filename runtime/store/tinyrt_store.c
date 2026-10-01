@@ -13,15 +13,23 @@ tinyrt_status_t tinyrt_store_open(const tinyrt_store_io_t *io,tinyrt_package_ver
     *out=s;return TINYRT_OK;
 }
 void tinyrt_store_close(tinyrt_store_t *s) {if(s) {free(s->install);free(s);}}
-tinyrt_status_t tinyrt_store_list(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32_t n,uint32_t *count) {
+static tinyrt_status_t list_health(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32_t n,uint32_t *count,bool quarantined) {
     if(!s||!count||(n&&!a)) return TINYRT_INVALID_ARGUMENT;
     *count=0;
     if(s->dirty) {tinyrt_status_t r=tr_recover(s);if(r!=TINYRT_OK) return r;}
-    *count=s->directory.count;
+    for(uint32_t i=0;i<s->directory.count;++i)
+        if(s->directory.records[i].quarantined==quarantined) ++*count;
     if(n<*count) return TINYRT_NO_SPACE;
-    for(uint32_t i=0;i<*count;++i) a[i]=s->directory.records[i].app;
+    for(uint32_t i=0,j=0;i<s->directory.count;++i)
+        if(s->directory.records[i].quarantined==quarantined) a[j++]=s->directory.records[i].app;
     if(*count==2&&strcmp(a[0].id.app_id,a[1].id.app_id)>0) {tinyrt_app_info_t t=a[0];a[0]=a[1];a[1]=t;}
     return TINYRT_OK;
+}
+tinyrt_status_t tinyrt_store_list(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32_t n,uint32_t *count) {
+    return list_health(s,a,n,count,false);
+}
+tinyrt_status_t tinyrt_store_list_quarantined(tinyrt_store_t *s,tinyrt_app_info_t *a,uint32_t n,uint32_t *count) {
+    return list_health(s,a,n,count,true);
 }
 tinyrt_status_t tinyrt_store_query(tinyrt_store_t *s,const tinyrt_package_id_t *id,tinyrt_app_info_t *a) {
     if(!s||!id||!a||!tr_id_valid(id->app_id)||!id->version) return TINYRT_INVALID_ARGUMENT;
@@ -30,7 +38,27 @@ tinyrt_status_t tinyrt_store_query(tinyrt_store_t *s,const tinyrt_package_id_t *
     memset(a,0,sizeof(*a));
     if(s->dirty) {tinyrt_status_t r=tr_recover(s);if(r!=TINYRT_OK) return r;}
     for(uint32_t i=0;i<s->directory.count;++i)
-        if(tr_identity_equal(&requested,&s->directory.records[i].app.id)) {*a=s->directory.records[i].app;return TINYRT_OK;}
+        if(tr_identity_equal(&requested,&s->directory.records[i].app.id)) {
+            if(s->directory.records[i].quarantined) return TINYRT_VERIFY_FAILED;
+            *a=s->directory.records[i].app;return TINYRT_OK;
+        }
+    return TINYRT_NOT_FOUND;
+}
+tinyrt_status_t tinyrt_store_recheck(tinyrt_store_t *s,const tinyrt_package_id_t *id) {
+    if(!s||!id||!tr_id_valid(id->app_id)||!id->version) return TINYRT_INVALID_ARGUMENT;
+    if(s->install) return TINYRT_BUSY;
+    if(s->dirty) {tinyrt_status_t r=tr_recover(s);if(r!=TINYRT_OK) return r;}
+    for(uint32_t i=0;i<s->directory.count;++i) {
+        tr_record_t *record=&s->directory.records[i];
+        if(!tr_identity_equal(id,&record->app.id)) continue;
+        tinyrt_app_info_t actual={0};
+        tinyrt_status_t r=s->verify(s->verify_ctx,&s->io,tr_slot_offset(record->slot),record->app.package_size,&actual);
+        if(r==TINYRT_OK && (!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&record->app)))
+            r=TINYRT_VERIFY_FAILED;
+        if(r==TINYRT_CORRUPT) r=TINYRT_VERIFY_FAILED;
+        if(r==TINYRT_OK||r==TINYRT_VERIFY_FAILED) record->quarantined=r!=TINYRT_OK;
+        return r;
+    }
     return TINYRT_NOT_FOUND;
 }
 
@@ -75,8 +103,9 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
     int index=find_app(s,a->id.app_id);
     if(index>=0) {
         const tinyrt_app_info_t *old=&s->directory.records[index].app;
-        if(tr_app_equal(old,a)) return TINYRT_ALREADY_INSTALLED;
-        if(a->id.version<=old->id.version) return TINYRT_CONFLICT;
+        if(tr_app_equal(old,a)) {
+            if(!s->directory.records[index].quarantined) return TINYRT_ALREADY_INSTALLED;
+        } else if(a->id.version<=old->id.version) return TINYRT_CONFLICT;
     } else if(s->directory.count>=2) return TINYRT_NO_SPACE;
     if(s->directory.generation==UINT64_MAX) return TINYRT_CONFLICT;
 
@@ -131,6 +160,7 @@ tinyrt_status_t tinyrt_store_commit(tinyrt_install_t *h) {
     next.records[index].app=h->expected;next.records[index].slot=h->slot;
     ++next.generation;
     r=publish_directory(s,&next);
+    if(r==TINYRT_OK && s->directory.records[index].quarantined) r=TINYRT_VERIFY_FAILED;
     if(r==TINYRT_OK) h->committed=true;else h->failed=true;
     return r;
 }
@@ -165,6 +195,7 @@ tinyrt_status_t tinyrt_store_read(tinyrt_store_t *s,const tinyrt_package_id_t *i
     for(uint32_t i=0;i<s->directory.count;++i) {
         const tr_record_t *record=&s->directory.records[i];
         if(!tr_identity_equal(&requested,&record->app.id)) continue;
+        if(record->quarantined) return TINYRT_VERIFY_FAILED;
         if(offset>=record->app.package_size||size>record->app.package_size-offset)
             return TINYRT_INVALID_ARGUMENT;
         uint32_t base=tr_slot_offset(record->slot)+offset;

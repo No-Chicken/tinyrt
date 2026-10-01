@@ -29,6 +29,19 @@ static bool valid_id(const uint8_t *p) {
     }
     return true;
 }
+static tinyrt_status_t authorize_id(const char *scope,const char *id) {
+    if(!scope || !scope[0]) return TINYRT_OK;
+    size_t n=0;
+    for(;n<32 && scope[n];++n) {
+        unsigned char c=(unsigned char)scope[n];
+        if(!((c>='a'&&c<='z')||(c>='0'&&c<='9')||c=='.'||c=='_'||c=='-'))
+            return TINYRT_INVALID_ARGUMENT;
+    }
+    if(n==32) return TINYRT_INVALID_ARGUMENT;
+    if(scope[n-1]=='.')
+        return strlen(id)>n && !strncmp(scope,id,n) ? TINYRT_OK : TINYRT_VERIFY_FAILED;
+    return !strcmp(scope,id) ? TINYRT_OK : TINYRT_VERIFY_FAILED;
+}
 static bool valid_title(const uint8_t *p) {
     size_t n;
     if(!canonical_string(p,64,&n)) return false;
@@ -105,16 +118,18 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     if(r!=TINYRT_OK) return r;
     tinyrt_package_metadata_t m={0};
     if(!parse_header(header,length,&m)) return TINYRT_VERIFY_FAILED;
-    const uint8_t *key=NULL;
+    const tinyrt_package_trusted_key_t *trusted=NULL;
     for(size_t i=0;i<v->trusted_key_count;++i) {
         if(v->trusted_keys[i].key_id==m.signing_key_id) {
-            if(key) return TINYRT_INVALID_ARGUMENT; /* Ambiguous trust configuration. */
-            key=v->trusted_keys[i].public_key;
+            if(trusted) return TINYRT_INVALID_ARGUMENT; /* Ambiguous trust configuration. */
+            trusted=&v->trusted_keys[i];
         }
     }
-    if(!key || key[0]!=4) return TINYRT_VERIFY_FAILED;
+    if(!trusted || trusted->public_key[0]!=4) return TINYRT_VERIFY_FAILED;
+    r=authorize_id(trusted->app_id_prefix,m.app.id.app_id);
+    if(r!=TINYRT_OK) return r;
     r=signed_header_digest(header,digest);
-    if(r==TINYRT_OK) r=tr_package_p256_verify(key,digest,header+192);
+    if(r==TINYRT_OK) r=tr_package_p256_verify(trusted->public_key,digest,header+192);
     if(r!=TINYRT_OK) return r;
     tr_package_hash_t *whole=NULL,*payload=NULL;
     r=tr_package_hash_new(&whole);
@@ -136,7 +151,8 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     if(r!=TINYRT_OK) return r;
     r=v->validate_wasm(v->wasm_ctx,io,off+m.wasm_offset,m.wasm_size,&m.policy);
     if(r!=TINYRT_OK)
-        return (r==TINYRT_IO_ERROR || r==TINYRT_NO_MEMORY || r==TINYRT_BUSY) ? r : TINYRT_VERIFY_FAILED;
+        return (r==TINYRT_IO_ERROR || r==TINYRT_NO_MEMORY || r==TINYRT_BUSY ||
+                r==TINYRT_INVALID_ARGUMENT) ? r : TINYRT_VERIFY_FAILED;
     *out=m;
     return TINYRT_OK;
 }

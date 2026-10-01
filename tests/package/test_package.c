@@ -68,6 +68,29 @@ int main(int argc,char **argv) {
     config.trusted_keys=duplicate; config.trusted_key_count=2;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     config.trusted_keys=&key; config.trusted_key_count=1;
+    const struct { const char *scope; tinyrt_status_t expected; } scopes[]={
+        {NULL,TINYRT_OK},{"",TINYRT_OK},{"demo.",TINYRT_OK},
+        {"demo.app",TINYRT_OK},{"demo",TINYRT_VERIFY_FAILED},
+        {"dem",TINYRT_VERIFY_FAILED},{"demo.app.",TINYRT_VERIFY_FAILED},
+        {"other.",TINYRT_VERIFY_FAILED},{"Demo.",TINYRT_INVALID_ARGUMENT},
+        {"demo/",TINYRT_INVALID_ARGUMENT},
+        {"abcdefghijklmnopqrstuvwxyz123456",TINYRT_INVALID_ARGUMENT}};
+    for(size_t i=0;i<sizeof(scopes)/sizeof(scopes[0]);++i) {
+        fixture(argv[1],"valid.pkg");key.app_id_prefix=scopes[i].scope;
+        CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==scopes[i].expected);
+        if(scopes[i].expected!=TINYRT_OK) CHECK(wasm_calls==0 && metadata.app.id.version==0);
+    }
+    tinyrt_package_trusted_key_t publishers[2]={key,{.key_id=8}};
+    publishers[0].app_id_prefix="demo.";publishers[1].app_id_prefix="other.";
+    CHECK(load(argv[1],"publisher2.bin",publishers[1].public_key,65)==65);
+    config.trusted_keys=publishers;config.trusted_key_count=2;
+    const char *namespaces[]={"publisher2_valid","publisher2_cross","namespace_boundary","namespace_empty"};
+    for(unsigned i=0;i<4;++i) {
+        char file[64];snprintf(file,sizeof(file),"%s.pkg",namespaces[i]);fixture(argv[1],file);
+        CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==(i?TINYRT_VERIFY_FAILED:TINYRT_OK));
+        if(i) CHECK(wasm_calls==0);
+    }
+    config.trusted_keys=&key;config.trusted_key_count=1;key.app_id_prefix=NULL;
     char reject[4096]; size_t names=load(argv[1],"reject.txt",reject,sizeof(reject)-1); reject[names]=0;
     char *name=strtok(reject,"\r\n");
     while(name) {
@@ -94,6 +117,14 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_NO_MEMORY);
     wasm_result=TINYRT_BUSY;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_BUSY);
+    wasm_result=TINYRT_INVALID_ARGUMENT;
+    memset(&metadata,0xa5,sizeof(metadata));
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
+    tinyrt_package_metadata_t empty_metadata={0};
+    CHECK(!memcmp(&metadata,&empty_metadata,sizeof(metadata)));
+    memset(&app,0xa5,sizeof(app));
+    CHECK(tinyrt_package_verify(&config,&io,base,data_size,&app)==TINYRT_INVALID_ARGUMENT);
+    tinyrt_app_info_t empty_app={0};CHECK(!memcmp(&app,&empty_app,sizeof(app)));
     config.validate_wasm=NULL;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     config.validate_wasm=wasm_stub; config.trusted_key_count=0;

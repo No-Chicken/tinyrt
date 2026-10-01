@@ -10,8 +10,8 @@ KEY = ec.derive_private_key(42, ec.SECP256R1())
 DOMAIN = b"TinyRT-package-v1\0"
 WASM = b"\0asm\x01\0\0\0\x00\x05\x04test"
 ASSETS = bytes(range(256)) * 9
-def signed(header, payload):
-    r, s = utils.decode_dss_signature(KEY.sign(DOMAIN + bytes(header[:192]), ec.ECDSA(hashes.SHA256())))
+def signed(header, payload, key=KEY):
+    r, s = utils.decode_dss_signature(key.sign(DOMAIN + bytes(header[:192]), ec.ECDSA(hashes.SHA256())))
     header[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
     return bytes(header) + payload
 def fixtures(folder):
@@ -28,6 +28,17 @@ def fixtures(folder):
     good = signed(bytearray(h), WASM+ASSETS)
     (folder/"valid.pkg").write_bytes(good)
     (folder/"expected.sha256").write_bytes(hashlib.sha256(good).digest())
+    publisher2 = ec.derive_private_key(43, ec.SECP256R1())
+    (folder/"publisher2.bin").write_bytes(publisher2.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
+    for name, app_id, key_id, signer in [
+        ("publisher2_valid", "other.app", 8, publisher2),
+        ("publisher2_cross", "demo.app", 8, publisher2),
+        ("namespace_boundary", "demoevil.app", 7, KEY),
+        ("namespace_empty", "demo.", 7, KEY)]:
+        scoped = bytearray(h)
+        scoped[56:88] = app_id.encode().ljust(32, b"\0")
+        struct.pack_into("<I", scoped, 52, key_id)
+        (folder/(name+".pkg")).write_bytes(signed(scoped, WASM+ASSETS, signer))
     cases = {}
     def changed(name, offset, value):
         data = bytearray(h); data[offset:offset+len(value)] = value

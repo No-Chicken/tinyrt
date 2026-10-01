@@ -79,9 +79,36 @@ Guest host calls are bounded RAM work; the owning service persists successful
 transactions outside guest execution. Physical NVS, BLE and device display
 acceptance remain product tests; host success does not establish hardware safety.
 
+## Host protection policies
+
+Trusted keys now optionally restrict `app_id_prefix`: NULL/empty keeps legacy
+unrestricted trust, a trailing dot matches nonempty descendants (`demo.`), and
+any other value matches one exact app ID. This is host policy, not a package-v1
+encoding change. Independent publishers must receive disjoint scopes. Intentional
+overlap permits key rotation and must be authorized by the product trust policy.
+
+The manager coalesces changed KV into at most one ordinary save attempt per
+5 seconds, using one timer across guest restarts and app switches. Setters still
+update RAM immediately; successful callbacks flush pending data when due even
+if that callback changes no keys. Normal stop flushes remaining changes and is
+an explicit host-controlled exception to the cadence. Guest faults and save
+errors discard unsaved RAM; power loss can also lose pending changes. This is
+not a rate guarantee against repeated host stop/start, manager recreation or
+power cycling. The host must serialize calls and provide a monotonic uint32
+millisecond clock and transactional storage. See [host protection semantics](specs/host-protection.md).
+
+Store recovery first selects the newest structurally valid committed directory,
+then quarantines invalid packages individually without writing media. Healthy
+apps remain available. Quarantine keeps the original identity, version floor,
+capacity usage and slot reservation. Hosts can list quarantined identities,
+repair with the exact original package, replace with a higher version, or
+uninstall. IO/resource/configuration failures are returned rather than treated
+as corruption. A damaged package never causes directory rollback; damaged
+directory structure may still require selecting an older valid directory.
+
 ## Source provenance
 
 This extraction preserves the original source and notices without assigning a
 new project license. WAMR is obtained separately at a fixed revision and retains
-its upstream license. Test signing scalars 1 and 42 are public test fixtures;
+its upstream license. Test signing scalars 1, 2, 42 and 43 are public test fixtures;
 they must never be trusted by production devices. No production keys are stored.

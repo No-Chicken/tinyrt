@@ -7,6 +7,7 @@
 unsigned runtime_destroy_count;
 int runtime_fail_event;
 int runtime_stop_write;
+int runtime_skip_write;
 int metadata_swap;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -29,6 +30,7 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r) {
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,int32_t y,int32_t arg) {
  (void)kind;(void)x;(void)y;(void)arg;
+ if(runtime_skip_write)return TINYRT_OK;
  int32_t old=r->host.kv_get(r->host.ctx,0,0);
  tinyrt_status_t s=r->host.kv_set(r->host.ctx,0,old+1);
  return runtime_fail_event?TINYRT_VERIFY_FAILED:s;

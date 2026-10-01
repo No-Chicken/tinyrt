@@ -14,6 +14,9 @@ struct tinyrt_manager {
     tinyrt_app_info_t running;
     uint32_t mask;
     int32_t values[16];
+    uint32_t durable_mask, last_save_ms;
+    int32_t durable_values[16];
+    bool save_attempted;
     tinyrt_frame_t frame;
     tinyrt_package_metadata_t catalog[2];
     uint32_t catalog_count;
@@ -71,19 +74,35 @@ static void destroy_runtime(tinyrt_manager_t *m) {
     memset(&m->running, 0, sizeof(m->running));
     m->mask = 0;
     memset(m->values, 0, sizeof(m->values));
+    m->durable_mask = 0;
+    memset(m->durable_values, 0, sizeof(m->durable_values));
+}
+static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
+    if (m->mask == m->durable_mask && !memcmp(m->values, m->durable_values, sizeof(m->values)))
+        return TINYRT_OK;
+    uint32_t now = m->storage.now_ms(m->storage.ctx);
+    if (!force && m->save_attempted && (uint32_t)(now - m->last_save_ms) < TINYRT_MANAGER_SAVE_INTERVAL_MS)
+        return TINYRT_OK;
+    /* Failed attempts consume the same allowance so restarting after a storage
+     * failure cannot turn ordinary callbacks into an unbounded retry loop. */
+    m->save_attempted = true;
+    m->last_save_ms = now;
+    tinyrt_status_t r = m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    if (r == TINYRT_OK) {
+        m->durable_mask = m->mask;
+        memcpy(m->durable_values, m->values, sizeof(m->values));
+    }
+    return r;
 }
 tinyrt_status_t tinyrt_manager_stop(tinyrt_manager_t *m) {
     if (!m)
         return TINYRT_INVALID_ARGUMENT;
     if (!m->runtime)
         return TINYRT_OK;
-    uint32_t mask = m->mask;
-    int32_t old[16];
-    memcpy(old, m->values, sizeof(old));
     tinyrt_status_t r = tinyrt_runtime_stop(m->runtime);
     const char *detail = r == TINYRT_OK ? "stop persistence failed" : tinyrt_runtime_last_error(m->runtime);
-    if (r == TINYRT_OK && (m->mask != mask || memcmp(m->values, old, sizeof(old))))
-        r = m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    if (r == TINYRT_OK)
+        r = persist(m, true);
     if (r != TINYRT_OK)
         snprintf(m->error, sizeof(m->error), "%s (status=%d)", detail && *detail ? detail : "application stop failed", r);
     destroy_runtime(m);
@@ -136,9 +155,21 @@ tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *m, tinyrt_package_metadata
         }
     } else {
         m->catalog_valid = false;
-        for (uint32_t i = 0; r == TINYRT_OK && i < n; i++)
-            r = inspect(m, &apps[i], &out[i]);
+        uint32_t healthy = 0;
+        for (uint32_t i = 0; r == TINYRT_OK && i < n; i++) {
+            r = inspect(m, &apps[i], &out[healthy]);
+            if (r == TINYRT_VERIFY_FAILED || r == TINYRT_CORRUPT) {
+                /* Confirm against immutable committed identity before hiding a
+                 * newly damaged app. Never quarantine transient read/resource
+                 * failures or inconsistent metadata from a faulty adapter. */
+                tinyrt_status_t recheck = tinyrt_store_recheck(m->store, &apps[i].id);
+                if (recheck == TINYRT_VERIFY_FAILED) {r = TINYRT_OK;continue;}
+                if (recheck != TINYRT_OK) r = recheck;
+            }
+            if (r == TINYRT_OK) ++healthy;
+        }
         if (r == TINYRT_OK) {
+            n = healthy;
             memcpy(m->catalog, out, n * sizeof(*out));
             m->catalog_count = n;
             m->catalog_valid = true;
@@ -152,6 +183,14 @@ tinyrt_status_t tinyrt_manager_query(tinyrt_manager_t *m, const tinyrt_package_i
                                      tinyrt_app_info_t *out) {
     return m ? tinyrt_store_query(m->store, id, out) : TINYRT_INVALID_ARGUMENT;
 }
+tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *m, tinyrt_app_info_t out[2], uint32_t *count) {
+    if (!m || !out || !count)
+        return TINYRT_INVALID_ARGUMENT;
+    *count = 0;
+    if (m->install)
+        return TINYRT_BUSY;
+    return tinyrt_store_list_quarantined(m->store, out, 2, count);
+}
 tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_t *a) {
     if (!m || !a || !a->package_size || a->package_size > TINYRT_STORE_SLOT_SIZE)
         return TINYRT_INVALID_ARGUMENT;
@@ -162,15 +201,22 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
     tinyrt_status_t r = tinyrt_store_query(m->store, &a->id, &found);
     if (r == TINYRT_OK)
         return found.package_size == a->package_size ? TINYRT_ALREADY_INSTALLED : TINYRT_CONFLICT;
-    if (r != TINYRT_NOT_FOUND)
+    if (r != TINYRT_NOT_FOUND && r != TINYRT_VERIFY_FAILED)
         return r;
     r = tinyrt_store_list(m->store, apps, 2, &count);
     if (r != TINYRT_OK)
         return r;
+    uint32_t healthy_count = count, quarantined_count = 0;
+    r = tinyrt_store_list_quarantined(m->store, apps + count, 2 - count, &quarantined_count);
+    if (r != TINYRT_OK)
+        return r;
+    count += quarantined_count;
     bool update = false;
     for (uint32_t i = 0; i < count; i++)
         if (!strcmp(apps[i].id.app_id, a->id.app_id)) {
-            if (a->id.version <= apps[i].id.version)
+            bool repair = i >= healthy_count && a->package_size == apps[i].package_size &&
+                          a->id.version == apps[i].id.version && !memcmp(a->id.sha256, apps[i].id.sha256, 32);
+            if (!repair && a->id.version <= apps[i].id.version)
                 return TINYRT_CONFLICT;
             update = true;
         }
@@ -214,6 +260,18 @@ tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *m, const tinyrt_packa
         return TINYRT_BUSY;
     tinyrt_app_info_t a;
     tinyrt_status_t r = tinyrt_store_query(m->store, id, &a);
+    if (r == TINYRT_VERIFY_FAILED) {
+        tinyrt_app_info_t quarantined[2];uint32_t count = 0;
+        r = tinyrt_store_list_quarantined(m->store, quarantined, 2, &count);
+        if (r != TINYRT_OK)
+            return r;
+        r = TINYRT_NOT_FOUND;
+        for (uint32_t i = 0; i < count; ++i)
+            if (quarantined[i].id.version == id->version && !strcmp(quarantined[i].id.app_id, id->app_id) &&
+                !memcmp(quarantined[i].id.sha256, id->sha256, 32)) {
+                a = quarantined[i];r = TINYRT_OK;break;
+            }
+    }
     if (r != TINYRT_OK)
         return r;
     r = tinyrt_manager_stop(m);
@@ -250,11 +308,10 @@ static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     destroy_runtime(m); /* A poisoned instance must never receive another call. */
     return r;
 }
-static tinyrt_status_t finish_call(tinyrt_manager_t *m, uint32_t mask, const int32_t old[16],
-                                   tinyrt_frame_t *out) {
+static tinyrt_status_t finish_call(tinyrt_manager_t *m, tinyrt_frame_t *out) {
     tinyrt_status_t r = tinyrt_runtime_render(m->runtime, &m->frame);
-    if (r == TINYRT_OK && (m->mask != mask || memcmp(m->values, old, sizeof(m->values))))
-        r = m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    if (r == TINYRT_OK)
+        r = persist(m, false);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
     *out = m->frame;
@@ -286,8 +343,12 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
             found = true;
             break;
         }
-    if (!found)
-        return TINYRT_NOT_FOUND;
+    if (!found) {
+        /* Listing may have just discovered corruption and quarantined the
+         * requested identity. Preserve that diagnostic for direct launches. */
+        r = tinyrt_store_query(m->store, id, &a);
+        return r == TINYRT_OK ? TINYRT_VERIFY_FAILED : r;
+    }
     uint8_t *wasm = malloc(meta.wasm_size);
     if (!wasm)
         return TINYRT_NO_MEMORY;
@@ -302,13 +363,12 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     r = m->storage.load(m->storage.ctx, a.id.app_id, &m->mask, m->values);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
-    uint32_t old_mask = m->mask;
-    int32_t old[16];
-    memcpy(old, m->values, sizeof(old));
+    m->durable_mask = m->mask;
+    memcpy(m->durable_values, m->values, sizeof(m->values));
     r = tinyrt_runtime_init(m->runtime, width, height);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
-    return finish_call(m, old_mask, old, out);
+    return finish_call(m, out);
 }
 tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t x, int32_t y, int32_t arg,
                                      tinyrt_frame_t *out) {
@@ -316,13 +376,10 @@ tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t 
         return TINYRT_INVALID_ARGUMENT;
     if (!m->runtime)
         return TINYRT_NOT_FOUND;
-    uint32_t mask = m->mask;
-    int32_t old[16];
-    memcpy(old, m->values, sizeof(old));
     tinyrt_status_t r = tinyrt_runtime_event(m->runtime, kind, x, y, arg);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
-    return finish_call(m, mask, old, out);
+    return finish_call(m, out);
 }
 const char *tinyrt_manager_error(const tinyrt_manager_t *m) {
     return m ? m->error : "invalid manager";

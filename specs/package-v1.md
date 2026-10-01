@@ -40,9 +40,13 @@ UTF-8 不接受过长编码、孤立延续字节、截断序列、代理码点�
 
 `tinyrt_package_verifier_t` 的信任集由调用方提供，公钥为 SEC1 未压缩 65 字节（04||X||Y）。没有密钥回退；未知 ID 拒绝，同一个 ID 重复匹配视为配置错误。
 
+每个 `tinyrt_package_trusted_key_t` 可设置 `app_id_prefix`，由宿主保管字符串及其生命周期；`NULL` 或空字符串保留旧版不限 ID 的行为。1～31 字节、字符范围 `[a-z0-9._-]`；以点结尾表示非空后代命名空间，例如 `demo.` 接受 `demo.snake`，拒绝 `demo`、`demo.` 和 `demoevil.snake`。不以点结尾表示精确 ID，例如 `demo.snake` 只接受该 ID。匹配钥的范围配置非法返回 `INVALID_ARGUMENT`，范围不匹配返回 `VERIFY_FAILED`，均不进入 Wasm 验证。
+
+不同钥可以有相同范围，以支持宿主明确授权的换钥。core 不推断发布者关系；独立发布者应由产品配置不重叠范围。任何受信且在范围内的钥都可以签该 ID 的更高版本，因此范围重叠意味着共同更新权限，并不等于发布者隔离。钥移除或范围收窄后，旧包可能进入隔离；撤销策略由宿主管理。本策略不改变包 v1 字节、签名域或 guest ABI。
+
 `validate_wasm` 是必需的独立回调，收到**绝对 Wasm 偏移**、长度和已认证策略。它必须验证 Wasm 结构、ABI 导出、导入白名单、内存上限、无 start section/共享内存/threads/WASI，不能运行 guest。缺回调返回 INVALID_ARGUMENT。包模块主机测试使用明确命名的 stub；不能把这些测试当作真实 Wasm 验证证据。
 
-整个同步校验期间 IO 必须提供不可变快照。包模块每次读取不超过 1024 字节；不调用 program/erase/sync，不分配整包缓冲。输入读取错误保留原状态，IO_ERROR、NO_MEMORY、BUSY 不转成数据损坏；所有失败输出置零。真实校验失败返回 VERIFY_FAILED，错误 API/歧义信任配置返回 INVALID_ARGUMENT。
+整个同步校验期间 IO 必须提供不可变快照。包模块每次读取不超过 1024 字节；不调用 program/erase/sync，不分配整包缓冲。输入读取错误保留原状态，IO_ERROR、NO_MEMORY、BUSY 不转成数据损坏；Wasm 验证器因宿主未初始化、配置错误返回的 INVALID_ARGUMENT 同样原样保留，不导致健康包隔离。所有失败输出置零。真实校验失败返回 VERIFY_FAILED，错误 API/歧义信任配置返回 INVALID_ARGUMENT。
 
 ## 打包工具
 
@@ -66,4 +70,4 @@ python /path/to/tinyrt-sdk/tools/package.py development-public-key --output deve
 python /path/to/tinyrt-sdk/tools/package.py pack --wasm app.wasm --output demo.trpkg --app-id demo.counter --title Counter --version 1 --permissions 7 --memory-pages 4 --budget 10000 --key-id 1 --development-key
 ```
 
-独立校验夹具另外使用公开测试标量 42，仅在测试构建目录生成标记为 test-only 的密钥文件。工具不查找、复制、生成或替换工程的固件签名私钥。
+独立校验夹具另外使用公开测试标量 2、42、43，均只作测试签名。工具不查找、复制、生成或替换工程的固件签名私钥。

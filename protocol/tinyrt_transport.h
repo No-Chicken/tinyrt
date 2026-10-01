@@ -12,6 +12,8 @@
 #define TINYRT_OP_UNINSTALL 0x14u
 #define TINYRT_OP_LAUNCH 0x15u
 #define TINYRT_OP_STOP 0x16u
+#define TINYRT_OP_LIST_QUARANTINED 0x17u
+#define TINYRT_CAP_QUARANTINE 8u
 typedef struct {
     uint8_t payload[TINYRT_MGMT_MAX_MESSAGE];
     uint16_t request_id, total, received;

@@ -7,8 +7,8 @@
 static unsigned checks;
 #define CHECK(x) do {++checks; if(!(x)) {fprintf(stderr,"FAIL %s:%d %s\n",__FILE__,__LINE__,#x); exit(1);}} while(0)
 static fake_nor_t nor;
-static tinyrt_package_trusted_key_t key={.key_id=1};
-static tinyrt_package_verifier_t verifier={&key,1,tinyrt_runtime_validate_wasm,NULL};
+static tinyrt_package_trusted_key_t keys[2]={{.key_id=1,.app_id_prefix="demo."},{.key_id=2,.app_id_prefix="other."}};
+static tinyrt_package_verifier_t verifier={keys,2,tinyrt_runtime_validate_wasm,NULL};
 static tinyrt_frame_t frame,previous;
 static unsigned saves,clears;
 static bool fail_clear,fail_save;
@@ -33,7 +33,8 @@ static tinyrt_status_t kv_clear(void *ctx,const char *id) {
     (void)ctx; if(fail_clear) return TINYRT_IO_ERROR;
     kv_record_t *r=record(id); r->mask=0; memset(r->values,0,sizeof(r->values)); ++clears; return TINYRT_OK;
 }
-static uint32_t now(void *ctx) {(void)ctx; return 1234;}
+static uint32_t clock_ms=1234;
+static uint32_t now(void *ctx) {(void)ctx; return clock_ms;}
 static tinyrt_manager_t *open_manager(void) {
     tinyrt_manager_t *m=NULL; tinyrt_store_io_t io=fake_nor_io(&nor);
     tinyrt_manager_storage_t kv={NULL,kv_load,kv_save,kv_clear,now};
@@ -80,9 +81,21 @@ static tinyrt_manager_t *reboot(tinyrt_manager_t *m) {
     CHECK(tinyrt_runtime_system_init()==TINYRT_OK);
     return open_manager(); /* NOR bytes and simulated persistent KV survive. */
 }
+static void corrupt_package(const char *dir,const char *name,uint32_t byte) {
+    uint32_t size;(void)load_package(dir,name,&size);
+    for(uint32_t i=0;i<TINYRT_STORE_SLOT_COUNT;++i) {
+        uint32_t off=2*TINYRT_STORE_SECTOR_SIZE+i*TINYRT_STORE_SLOT_SIZE;
+        if(!memcmp(nor.bytes+off,package,size)) {
+            CHECK(byte<size);nor.bytes[off+byte]^=1;return;
+        }
+    }
+    CHECK(false);
+}
 int main(int argc,char **argv) {
     if(argc!=2) return 2;
-    CHECK(read_file(PUBLIC_KEY_FILE,key.public_key,65)==65);
+    CHECK(read_file(PUBLIC_KEY_FILE,keys[0].public_key,65)==65);
+    char public2[1024];snprintf(public2,sizeof(public2),"%s/publisher2.bin",argv[1]);
+    CHECK(read_file(public2,keys[1].public_key,65)==65);
     CHECK(tinyrt_runtime_system_init()==TINYRT_OK);
     fake_nor_init(&nor);
     kv_record_t *kv=record("demo.counter"); kv->mask=1; kv->values[0]=999;
@@ -118,8 +131,13 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_manager_event(m,1,40,40,0,&frame)==TINYRT_OK);
     counter_frame("COUNTER V2","2",0x102a43);
     CHECK(kv->values[0]==2 && saves==2);
+    tinyrt_app_info_t foreign=install(m,argv[1],"counter-cross-publisher",TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_manager_query(m,&v2.id,&found)==TINYRT_OK);
+    CHECK(tinyrt_manager_query(m,&foreign.id,&found)==TINYRT_NOT_FOUND);
+    CHECK(kv->values[0]==2&&saves==2);
+    CHECK(tinyrt_manager_start(m,&v2.id,466,466,&frame)==TINYRT_OK);
     /* Failed persistence poisons the session and keeps the previous frame. */
-    previous=frame; fail_save=true;
+    previous=frame; fail_save=true; clock_ms+=5000;
     CHECK(tinyrt_manager_event(m,1,40,40,0,&frame)==TINYRT_IO_ERROR);
     CHECK(kv->values[0]==2 && saves==2 && !memcmp(&frame,&previous,sizeof(frame)));
     fail_save=false;
@@ -184,7 +202,67 @@ int main(int argc,char **argv) {
     }
     (void)install(m,argv[1],"stop_bad_signature",TINYRT_VERIFY_FAILED);
     CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_OK);
-    tinyrt_manager_close(m); tinyrt_runtime_system_shutdown();
+    /* Only one real signed package is corrupted. Reopening must preserve the
+     * healthy app, committed bad identity and original anti-downgrade floor. */
+    corrupt_package(argv[1],"stop_spin",200);
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK&&count==1);
+    unsigned mutations_before=nor.mutations;m=reboot(m);
+    CHECK(nor.mutations==mutations_before);
+    CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK&&count==1);
+    CHECK(!strcmp(listed[0].app.id.app_id,"demo.counter"));
+    tinyrt_app_info_t quarantined[2];
+    CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK&&count==1);
+    CHECK(!memcmp(&quarantined[0].id,&stop.id,sizeof(stop.id)));
+    memset(&found,0xa5,sizeof(found));
+    CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_VERIFY_FAILED&&found.id.version==0);
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_manager_start(m,&v1.id,466,466,&frame)==TINYRT_OK);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+    tinyrt_package_id_t wrong=stop.id;wrong.sha256[0]^=1;
+    CHECK(tinyrt_manager_uninstall(m,&wrong)==TINYRT_NOT_FOUND);
+    unsigned repair_clears=clears;
+    stop=install(m,argv[1],"stop_spin",TINYRT_OK);
+    CHECK(clears==repair_clears&&stop_kv->values[0]==12);
+    CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK&&count==0);
+    corrupt_package(argv[1],"stop_spin",260);m=reboot(m);
+    CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_VERIFY_FAILED);
+    stop=install(m,argv[1],"stop_repair",TINYRT_OK);
+    CHECK(clears==repair_clears&&stop_kv->values[0]==12);
+    CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_OK);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK&&stop_kv->values[0]==77);
+    unsigned switch_saves=saves;
+    CHECK(tinyrt_manager_start(m,&v1.id,466,466,&frame)==TINYRT_OK);
+    CHECK(tinyrt_manager_event(m,1,40,40,0,&frame)==TINYRT_OK);
+    CHECK(saves==switch_saves&&kv->values[0]==0); /* Same periodic timer across apps. */
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK&&saves==switch_saves+1&&kv->values[0]==1);
+    corrupt_package(argv[1],"stop_repair",200);m=reboot(m);
+    CHECK(tinyrt_manager_uninstall(m,&stop.id)==TINYRT_OK);
+    CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_NOT_FOUND);
+    m=reboot(m);
+    CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK&&count==1);
+    CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK&&count==0);
+    tinyrt_manager_close(m);
+    /* An unavailable real Wasm validator is a host lifecycle error. It must
+     * neither create a quarantined catalog on open nor change existing health. */
+    tinyrt_store_io_t io=fake_nor_io(&nor);
+    tinyrt_store_t *healthy_store=NULL,*unavailable_store=(void *)1;
+    CHECK(tinyrt_store_open(&io,tinyrt_package_verify,&verifier,&healthy_store)==TINYRT_OK);
+    tinyrt_runtime_system_shutdown();
+    unsigned unavailable_mutations=nor.mutations;
+    CHECK(tinyrt_store_open(&io,tinyrt_package_verify,&verifier,&unavailable_store)==TINYRT_INVALID_ARGUMENT);
+    CHECK(unavailable_store==NULL&&nor.mutations==unavailable_mutations);
+    CHECK(tinyrt_store_recheck(healthy_store,&v1.id)==TINYRT_INVALID_ARGUMENT);
+    CHECK(tinyrt_store_query(healthy_store,&v1.id,&found)==TINYRT_OK);
+    CHECK(tinyrt_store_list_quarantined(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==0);
+    tinyrt_store_close(healthy_store);
+    CHECK(tinyrt_runtime_system_init()==TINYRT_OK);
+    CHECK(tinyrt_store_open(&io,tinyrt_package_verify,&verifier,&healthy_store)==TINYRT_OK);
+    CHECK(tinyrt_store_query(healthy_store,&v1.id,&found)==TINYRT_OK);
+    CHECK(tinyrt_store_list(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==1);
+    CHECK(tinyrt_store_list_quarantined(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==0);
+    CHECK(nor.mutations==unavailable_mutations);
+    tinyrt_store_close(healthy_store);tinyrt_runtime_system_shutdown();
     CHECK(tinyrt_runtime_memory_used()==0);
     printf("INTEGRATION checks=%u PASS (real SHA256/P256/store/manager/WAMR; simulated NOR/KV)\n",checks);
     return 0;

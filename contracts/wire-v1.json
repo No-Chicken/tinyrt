@@ -28,7 +28,9 @@
       "TINYRT_OP_PREPARE": 19,
       "TINYRT_OP_UNINSTALL": 20,
       "TINYRT_OP_LAUNCH": 21,
-      "TINYRT_OP_STOP": 22
+      "TINYRT_OP_STOP": 22,
+      "TINYRT_OP_LIST_QUARANTINED": 23,
+      "TINYRT_CAP_QUARANTINE": 8
     }
   },
   "package": {
@@ -60,6 +62,14 @@
     "version": 1,
     "header_size": 10,
     "frame_size": 20,
-    "max_message": 256
+    "max_message": 256,
+    "quarantine": {
+      "hello_capability_bit": 8,
+      "opcode": 23,
+      "request": "empty",
+      "response": "u8 count, followed by count standard 72-byte app-info records",
+      "query_status": 9,
+      "semantics": "Exact quarantined identities may be repaired by resending the same signed package or uninstalled. Final successful install still requires QUERY OK with the exact identity."
+    }
   }
 }

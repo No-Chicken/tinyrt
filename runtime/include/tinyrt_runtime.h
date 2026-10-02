@@ -26,12 +26,13 @@ typedef struct {
 } tinyrt_runtime_aot_config_t;
 typedef enum { TINYRT_DRAW_CLEAR=1, TINYRT_DRAW_RECT=2, TINYRT_DRAW_TEXT=3,
     TINYRT_DRAW_ROUND_RECT=4, TINYRT_DRAW_ARC=5, TINYRT_DRAW_TEXT_BOX=6,
-    TINYRT_DRAW_RGB565=7 } tinyrt_draw_kind_t;
+    TINYRT_DRAW_RGB565=7, TINYRT_DRAW_RGB565_SCALED=8 } tinyrt_draw_kind_t;
 typedef struct {
     uint32_t kind;
     int32_t x, y, w, h;
     uint32_t rgb;
     int32_t radius, thickness, start_angle, end_angle, font_px, align;
+    int32_t source_w, source_h;
     char text[64];
 } tinyrt_draw_command_t;
 typedef struct {
@@ -45,6 +46,9 @@ typedef struct {
     int32_t (*kv_get)(void *, uint32_t key, int32_t fallback);
     tinyrt_status_t (*kv_set)(void *, uint32_t key, int32_t value);
     uint32_t (*now_ms)(void *);
+    /* Current verified package resources only. At most 4096 bytes per call;
+     * no directory lookup, mutation, or unrelated package access. */
+    tinyrt_status_t (*asset_read)(void *,uint32_t offset,void *,uint32_t length);
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

@@ -6,11 +6,14 @@
 #else
 #define TINYRT_IMPORT(name)
 #endif
+/* Read current package resources in init/event; <=4096 bytes per call. Returns length or -1. */
+TINYRT_IMPORT(asset_read) int32_t asset_read(uint32_t offset,void *destination,uint32_t length);
 TINYRT_IMPORT(clock_interval) int32_t clock_interval(int32_t ms);
 TINYRT_IMPORT(draw_arc) int32_t draw_arc(int32_t cx,int32_t cy,int32_t radius,int32_t thickness,int32_t start_deg,int32_t end_deg,uint32_t rgb);
 TINYRT_IMPORT(draw_clear) int32_t draw_clear(uint32_t rgb);
 TINYRT_IMPORT(draw_rect) int32_t draw_rect(int32_t x,int32_t y,int32_t w,int32_t h,uint32_t rgb);
 TINYRT_IMPORT(draw_rgb565) int32_t draw_rgb565(int32_t x,int32_t y,int32_t w,int32_t h,const uint8_t *pixels,uint32_t length);
+TINYRT_IMPORT(draw_rgb565_scaled) int32_t draw_rgb565_scaled(int32_t x,int32_t y,int32_t dst_w,int32_t dst_h,int32_t src_w,int32_t src_h,const uint8_t *pixels,uint32_t length);
 TINYRT_IMPORT(draw_round_rect) int32_t draw_round_rect(int32_t x,int32_t y,int32_t w,int32_t h,int32_t radius,uint32_t rgb);
 TINYRT_IMPORT(draw_skip) int32_t draw_skip(void);
 TINYRT_IMPORT(draw_text) int32_t draw_text(int32_t x,int32_t y,const char *text,uint32_t length,uint32_t rgb);
@@ -21,12 +24,18 @@ TINYRT_IMPORT(input_events) int32_t input_events(uint32_t mask);
 TINYRT_IMPORT(kv_get) int32_t kv_get(uint32_t key,int32_t fallback);
 TINYRT_IMPORT(kv_set) int32_t kv_set(uint32_t key,int32_t value);
 TINYRT_IMPORT(now_ms) uint32_t now_ms(void);
+/* Execution backend: 0=instruction-metered interpreter, 1=deadline-guarded AOT. */
+TINYRT_IMPORT(runtime_backend) int32_t runtime_backend(void);
 #define TINYRT_TOUCH_RELEASE 1
 #define TINYRT_CLOCK_EVENT 2
 #define TINYRT_TOUCH_PRESS 3
 #define TINYRT_TOUCH_MOVE 4
 #define TINYRT_TOUCH_CANCEL 5
 #define TINYRT_INPUT_LIFECYCLE_MASK 0x38u
+#define TINYRT_USER_KEY_EVENT 6
+#define TINYRT_INPUT_USER_KEY_MASK 0x40u
+/* USER_KEY_EVENT: x=1, y=1 pressed / 0 released, arg=0. Opt in during init.
+ * Accept masks 0, 0x38, 0x40 or 0x78. CANCEL clears touch and keys. */
 /* Export these exact signatures. Return 0 on success. Each host call is bounded;
  * only render may draw, and every drawn frame starts with draw_clear. Text is UTF-8,
  * 1..63 bytes. Storage keys 0..15 contain signed 32-bit values; host scopes to app.

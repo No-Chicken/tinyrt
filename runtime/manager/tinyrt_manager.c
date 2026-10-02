@@ -13,6 +13,7 @@ struct tinyrt_manager {
     tinyrt_runtime_t *runtime;
     tinyrt_execution_guard_t guard;
     tinyrt_app_info_t running;
+    uint32_t resource_offset,resource_size;
     uint32_t mask;
     int32_t values[16];
     uint32_t durable_mask, last_save_ms;
@@ -311,6 +312,13 @@ static uint32_t host_now(void *ctx) {
     tinyrt_manager_t *m = ctx;
     return m->storage.now_ms(m->storage.ctx);
 }
+static tinyrt_status_t host_resource(void *ctx,uint32_t off,void *bytes,uint32_t length) {
+    tinyrt_manager_t *m=ctx;
+    if (off>m->resource_size || length>m->resource_size-off || length>4096)
+        return TINYRT_INVALID_ARGUMENT;
+    if (!length) return TINYRT_OK;
+    return tinyrt_store_read(m->store,&m->running.id,m->resource_offset+off,bytes,length);
+}
 static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     const char *detail = m->runtime ? tinyrt_runtime_last_error(m->runtime) : NULL;
     snprintf(m->error, sizeof(m->error), "%s (status=%d)", detail && *detail ? detail : "application failed",
@@ -373,7 +381,8 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource};
+    m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {
             tinyrt_runtime_aot_config_t config={m->verifier.aot_profile,&m->guard};

@@ -269,6 +269,33 @@ static int32_t draw_skip(wasm_exec_env_t e)
     if (!r->frame || r->frame->count || r->skipped) return fail(r,"skip must be the only render operation");
     r->skipped=true;return 0;
 }
+static int32_t draw_rgb565_scaled(wasm_exec_env_t e,int32_t x,int32_t y,int32_t w,int32_t h,
+                                 int32_t sw,int32_t sh,uint32_t ptr,uint32_t len)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_DRAW)) return -1;
+    if (!r->frame || r->skipped) return fail(r,"pixels outside drawing render");
+    if (!rectangle(r,x,y,w,h) || sw<1 || sw>256 || sh<1 || sh>240 ||
+        len!=(uint32_t)sw*(uint32_t)sh*2u) return fail(r,"scaled pixel bounds or length invalid");
+    if (r->frame->count && r->frame->pixel_bytes) return fail(r,"one image per frame");
+    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
+    const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if (!p) return fail(r,"pixel memory missing");
+    tinyrt_draw_command_t *c=command(r,TINYRT_DRAW_RGB565_SCALED);
+    if (!c) return -1;
+    c->x=x;c->y=y;c->w=w;c->h=h;c->source_w=sw;c->source_h=sh;
+    memcpy(r->frame->pixels,p,len);r->frame->pixel_bytes=len;
+    return 0;
+}
+static int32_t asset_read(wasm_exec_env_t e,uint32_t offset,uint32_t ptr,uint32_t len)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (r->callback>1 || len>4096 || !r->host.asset_read) return fail(r,"resource read callback or length invalid");
+    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"resource destination out of bounds");
+    void *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if (!p || r->host.asset_read(r->host.ctx,offset,p,len)!=TINYRT_OK) return fail(r,"resource read out of bounds or failed");
+    return (int32_t)len;
+}
 static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
 {
     tinyrt_runtime_t *r=context(e);
@@ -287,7 +314,7 @@ static int32_t input_events(wasm_exec_env_t e, uint32_t mask)
 {
     tinyrt_runtime_t *r=context(e);
     if (!permission(r,TINYRT_PERMISSION_INPUT)) return -1;
-    if (r->callback != 0 || (mask != 0 && mask != TINYRT_INPUT_EVENTS_MASK))
+    if (r->callback != 0 || (mask != 0 && mask != 56 && mask != 64 && mask != 120))
         return fail(r,"input subscription or callback invalid");
     r->input_events=mask;return 0;
 }
@@ -308,12 +335,15 @@ static uint32_t now_ms(wasm_exec_env_t e)
 }
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
+static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 : 0; }
 static NativeSymbol natives[] = {
+    { "asset_read", (void *)asset_read, "(iii)i", NULL },
     { "clock_interval", (void *)clock_interval, "(i)i", NULL },
     { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
     { "draw_rect", (void *)draw_rect, "(iiiii)i", NULL },
     { "draw_rgb565", (void *)draw_rgb565, "(iiiiii)i", NULL },
+    { "draw_rgb565_scaled", (void *)draw_rgb565_scaled, "(iiiiiiii)i", NULL },
     { "draw_round_rect", (void *)draw_round_rect, "(iiiiii)i", NULL },
     { "draw_skip", (void *)draw_skip, "()i", NULL },
     { "draw_text", (void *)draw_text, "(iiiii)i", NULL },
@@ -321,10 +351,11 @@ static NativeSymbol natives[] = {
     { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
-    { "now_ms", (void *)now_ms, "()i", NULL }
+    { "now_ms", (void *)now_ms, "()i", NULL },
+    { "runtime_backend", (void *)runtime_backend, "()i", NULL }
 };
-static const unsigned arity[] = { 1, 7, 1, 5, 6, 6, 0, 5, 9, 1, 2, 2, 0 };
-static const uint32_t required_permission[] = { 8, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8 };
+static const unsigned arity[] = { 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 1, 2, 2, 0, 0 };
+static const uint32_t required_permission[] = { 0, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -433,7 +464,7 @@ static bool module_policy(wasm_module_t module, const tinyrt_package_policy_t *p
         for (j = 0; j < sizeof(natives) / sizeof(*natives); j++)
             if (!strcmp(import.name, natives[j].symbol)) break;
         if (j == sizeof(natives) / sizeof(*natives) || !signature(import.u.func_type, arity[j])
-            || !(policy->permissions & required_permission[j])) return false;
+            || (required_permission[j] && !(policy->permissions & required_permission[j]))) return false;
     }
     unsigned found = 0;
     count = wasm_runtime_get_export_count(module);
@@ -728,11 +759,12 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || kind < 1 || kind > 5) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind > 6) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     if (kind != 2 && !(r->policy.permissions & TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
     if (kind >= 3 && !(r->input_events & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
     if ((kind == 1 || kind == 3 || kind == 4) && (x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
+    if (kind == 6 && (x != 1 || (y != 0 && y != 1) || arg != 0)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 2 && !(r->policy.permissions & TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
     uint32_t argv[] = { (uint32_t)kind, (uint32_t)x, (uint32_t)y, (uint32_t)arg };
     return invoke(r, 1, 4, argv);

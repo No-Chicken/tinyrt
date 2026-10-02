@@ -7,11 +7,18 @@ from cryptography.hazmat.primitives.asymmetric import ec, utils
 ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 
 def encode(wasm, *, app_id, title, version, key_id=1, test_scalar=1, assets=b""):
-    payload = wasm + assets
+    sections=[(1,wasm)]+([(3,assets)] if assets else [])
+    cursor=256+16*len(sections)
+    table=bytearray();content=bytearray()
+    for kind,data in sections:
+        pad=(-cursor)%4;content+=bytes(pad);cursor+=pad
+        table+=struct.pack("<IIII",kind,0,cursor,len(data))
+        content+=data;cursor+=len(data)
+    payload=table+content
     header = bytearray(256)
     header[:8] = b"TRPKG001"
-    struct.pack_into("<HH11I", header, 8, 1, 256, 256+len(payload), 256,
-                     len(wasm), 256+len(wasm), len(assets), version, 1, 15, 2, 100000, key_id)
+    struct.pack_into("<HH11I", header, 8, 1, 256, cursor, 256,
+                     len(sections), 16, 0, version, 1, 15, 2, 100000, key_id)
     name, label = app_id.encode("ascii"), title.encode("utf-8")
     assert 0 < len(name) < 32 and 0 < len(label) < 64
     header[56:56+len(name)] = name

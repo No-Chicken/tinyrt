@@ -19,13 +19,15 @@ def fixtures(folder):
     (folder/"public.bin").write_bytes(KEY.public_key().public_bytes(serialization.Encoding.X962, serialization.PublicFormat.UncompressedPoint))
     h = bytearray(256)
     h[:8] = b"TRPKG001"
-    struct.pack_into("<HH11I", h, 8, 1, 256, 256+len(WASM)+len(ASSETS), 256, len(WASM),
-                     256+len(WASM), len(ASSETS), 3, 1, 15, 8, 12345, 7)
+    struct.pack_into("<HH5I", h, 8, 1, 256, 304+len(ASSETS), 256, 2, 16, 0)
+    struct.pack_into("<6I",h,32,3,1,15,8,12345,7)
+    payload = (struct.pack('<8I',1,0,288,len(WASM),3,0,304,len(ASSETS))
+               + WASM + b'\0' + ASSETS)
     h[56:64] = b"demo.app"
     title = "\u8ba1\u6570\u5668".encode()
     h[88:88+len(title)] = title
-    h[152:184] = hashlib.sha256(WASM+ASSETS).digest()
-    good = signed(bytearray(h), WASM+ASSETS)
+    h[152:184] = hashlib.sha256(payload).digest()
+    good = signed(bytearray(h), payload)
     (folder/"valid.pkg").write_bytes(good)
     (folder/"expected.sha256").write_bytes(hashlib.sha256(good).digest())
     publisher2 = ec.derive_private_key(43, ec.SECP256R1())
@@ -38,11 +40,11 @@ def fixtures(folder):
         scoped = bytearray(h)
         scoped[56:88] = app_id.encode().ljust(32, b"\0")
         struct.pack_into("<I", scoped, 52, key_id)
-        (folder/(name+".pkg")).write_bytes(signed(scoped, WASM+ASSETS, signer))
+        (folder/(name+".pkg")).write_bytes(signed(scoped, payload, signer))
     cases = {}
     def changed(name, offset, value):
         data = bytearray(h); data[offset:offset+len(value)] = value
-        cases[name] = signed(data, WASM+ASSETS)
+        cases[name] = signed(data, payload)
     def u32(name, offset, value):
         changed(name, offset, struct.pack("<I", value))
     changed("magic", 0, b"BAD")
@@ -71,32 +73,29 @@ def fixtures(folder):
                              ("high_s",224,ORDER-int.from_bytes(good[224:256],"big"))]:
         bad=bytearray(good); bad[offset:offset+32]=value.to_bytes(32,"big"); cases[name]=bad
     cases["truncated"]=good[:-1]; cases["appended"]=good+b"x"; cases["short_header"]=good[:255]
-    for name, assets in [("no_assets", b""), ("maximum", bytes(0x200000-256-len(WASM)))]:
-        head=bytearray(h)
-        struct.pack_into("<I",head,12,256+len(WASM)+len(assets))
-        struct.pack_into("<I",head,28,len(assets))
-        head[152:184]=hashlib.sha256(WASM+assets).digest()
-        result=signed(head,WASM+assets)
+    from make_section_fixtures import envelope
+    for name, assets in [("no_assets", b""), ("maximum", bytes(0x200000-304))]:
+        result=envelope(h,[(1,WASM)]+([(3,assets)] if assets else []))
         (folder/(name+".pkg")).write_bytes(result)
         (folder/(name+".sha256")).write_bytes(hashlib.sha256(result).digest())
     # A second positive fixture uses a separately assembled title with the test key.
     alternate=bytearray(h); alternate[88:152]=bytes(64); alternate[88:95]=b"Counter"
-    reference=signed(alternate,WASM+ASSETS)
+    reference=signed(alternate,payload)
     (folder/"reference.pkg").write_bytes(reference)
     (folder/"reference.sha256").write_bytes(hashlib.sha256(reference).digest())
     for name,data in cases.items(): (folder/(name+".pkg")).write_bytes(data)
     (folder/"reject.txt").write_text("\n".join(cases)+"\n",encoding="ascii")
     print(f"Generated valid fixture + {len(cases)} rejection fixtures")
-    # v2 fixture is assembled independently of the SDK packer.
-    v2 = bytearray(h)
-    v2[:8] = b"TRPKG002"
-    struct.pack_into("<HH5I", v2, 8, 2, 256, 272+len(WASM), 256, 1, 16, 0)
+    # Section fixture is assembled independently of the SDK packer.
+    section = bytearray(h)
+    section[:8] = b"TRPKG001"
+    struct.pack_into("<HH5I", section, 8, 1, 256, 272+len(WASM), 256, 1, 16, 0)
     payload = struct.pack("<4I", 1, 0, 272, len(WASM)) + WASM
-    v2[152:184] = hashlib.sha256(payload).digest()
-    r, s = utils.decode_dss_signature(KEY.sign(b"TinyRT-package-v2\0" + bytes(v2[:192]), ec.ECDSA(hashes.SHA256())))
-    v2[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
-    (folder/"v2_wasm.pkg").write_bytes(bytes(v2)+payload)
-    import make_v2_fixtures
-    make_v2_fixtures.fixtures(folder,h)
+    section[152:184] = hashlib.sha256(payload).digest()
+    r, s = utils.decode_dss_signature(KEY.sign(b"TinyRT-package-v1\0" + bytes(section[:192]), ec.ECDSA(hashes.SHA256())))
+    section[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
+    (folder/"section_wasm.pkg").write_bytes(bytes(section)+payload)
+    import make_section_fixtures
+    make_section_fixtures.fixtures(folder,h)
 if __name__=="__main__":
     fixtures(Path(sys.argv[1]))

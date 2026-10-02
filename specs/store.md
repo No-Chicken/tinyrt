@@ -1,4 +1,4 @@
-# TinyRT package store v2
+# TinyRT package store format 1
 
 The store spans `0x4E0000` bytes (4992 KiB). Offsets 0 and 4096 contain two
 directory sectors. The remaining 4984 KiB stores immutable signed packages.
@@ -12,8 +12,8 @@ All integers are little-endian. A directory occupies exactly 4096 bytes.
 
 | Offset | Bytes | Value |
 |---|---:|---|
-| 0 | 8 | `TRDIR002` |
-| 8 | 4 | format version 2 |
+| 0 | 8 | `TRDIR001` |
+| 8 | 4 | format version 1 |
 | 12 | 4 | record count, 0 through 16 |
 | 16 | 8 | persistent commit generation, nonzero |
 | 24 | 8 | zero |
@@ -34,7 +34,7 @@ All integers are little-endian. A directory occupies exactly 4096 bytes.
 Package offsets must be 4096-byte aligned and at least 8192. Each allocation
 covers `ceil(package_size / 4096) * 4096` bytes, must fit the store, and must not
 overlap any other record. Duplicate IDs are invalid. Decoding verifies every
-pair of records. Legacy `TRDIR001` media returns `CORRUPT` without any write or
+pair of records. Old internal directory layouts, including the previous format number, return `CORRUPT` without any write or
 automatic formatting; changing a product partition table requires a separately
 authorized migration or clean installation.
 
@@ -97,7 +97,7 @@ first; any error clears the entire output. The operation performs no media
 writes and needs no additional catalog allocation. A live guest does not block
 clean-state statistics. Protocol opcode `STORAGE` 0x19 and HELLO capability 0x20
 use the 92-byte schema-1 payload defined in `contracts/wire-v1.json`. APP_INFO
-0x1A returns the 164-byte verified metadata layout from that same contract.
+0x1A returns the 248-byte schema-1 section metadata layout from that same contract.
 
 ## Memory placement and verification limits
 
@@ -114,12 +114,12 @@ The storage expansion's MSVC x64 structure probe reports a store of 1,376,
 directory of 1,296, and stats result of 48. Recovery's candidate pair is 2,592
 bytes plus the sector buffer; first provisioning additionally compares one
 4096-byte expected sector. These are heap costs, not measured ESP32 task-stack
-high-water values. The manager additionally owns the complete frame described
-in [graphics and scheduling](graphics-scheduling-v1.md), so consumers must
-budget that pixel payload separately. The package verifier's existing 1024-byte streaming block
+high-water values. The host supplies the unpublished frame described in
+[graphics and scheduling](graphics-scheduling-v1.md); consumers must budget
+that owned pixel payload separately using the current frame type size. The package verifier's existing 1024-byte streaming block
 and 256-byte header remain on the stack.
 
-Host tests cover independent v2 media fixtures, 16-app catalogs, first fit,
+Host tests cover independent format-1 media fixtures, 16-app catalogs, first fit,
 fragmentation, maximum packages, malformed intervals, quarantine revision
 changes, revision overflow and partial-write recovery. Signed integration runs
 a real WAMR guest from a 2 MiB package containing assets. This does not establish

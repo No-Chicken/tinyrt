@@ -76,17 +76,11 @@ static bool canonical_signature(const uint8_t *signature) {
 }
 static bool parse_header(const uint8_t h[256], uint32_t length, tinyrt_package_metadata_t *m) {
     uint32_t format=get16(h+8);
-    if((format!=1 && format!=2) || memcmp(h,format==1?"TRPKG001":"TRPKG002",8) || get16(h+10)!=256 ||
+    if(format!=1 || memcmp(h,"TRPKG001",8) || get16(h+10)!=256 ||
        get32(h+12)!=length || !all_zero(h+184,8)) return false;
     m->format_version=format;
-    if(format==1) {
-        m->wasm_offset=get32(h+16); m->wasm_size=get32(h+20);
-        m->assets_offset=get32(h+24); m->assets_size=get32(h+28);
-        /* Subtraction precedes every dependent addition or read. */
-        if(m->wasm_offset!=256 || m->wasm_size<=8 || m->wasm_size>length-256 ||
-           m->assets_offset!=256+m->wasm_size || m->assets_size!=length-m->assets_offset) return false;
-    } else if(get32(h+16)!=256 || get32(h+20)<1 || get32(h+20)>3 ||
-              get32(h+24)!=16 || get32(h+28)) return false;
+    if(get32(h+16)!=256 || get32(h+20)<1 || get32(h+20)>3 ||
+       get32(h+24)!=16 || get32(h+28)) return false;
     m->app.id.version=get32(h+32);
     m->policy.abi_version=get32(h+36); m->policy.permissions=get32(h+40);
     m->policy.max_memory_pages=get32(h+44); m->policy.instruction_budget=get32(h+48);
@@ -101,7 +95,7 @@ static bool parse_header(const uint8_t h[256], uint32_t length, tinyrt_package_m
     return true;
 }
 static tinyrt_status_t signed_header_digest(const uint8_t *header,uint8_t digest[32]) {
-    const char *domain=get16(header+8)==1?"TinyRT-package-v1":"TinyRT-package-v2";
+    const char *domain="TinyRT-package-v1";
     tr_package_hash_t *hash=NULL;
     tinyrt_status_t r=tr_package_hash_new(&hash);
     if(r==TINYRT_OK) r=tr_package_hash_update(hash,domain,18); /* Includes one NUL. */
@@ -215,10 +209,8 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     r=signed_header_digest(header,digest);
     if(r==TINYRT_OK) r=tr_package_p256_verify(trusted->public_key,digest,header+192);
     if(r!=TINYRT_OK) return r;
-    if(m.format_version==2) {
-        r=parse_sections(io,off,length,get32(header+20),&m);
-        if(r!=TINYRT_OK) return r;
-    }
+    r=parse_sections(io,off,length,get32(header+20),&m);
+    if(r!=TINYRT_OK) return r;
     m.execution_kind=TINYRT_PACKAGE_EXEC_WASM;
     if(m.wasm_size && !v->validate_wasm) return TINYRT_INVALID_ARGUMENT;
     if(m.aot_size) {

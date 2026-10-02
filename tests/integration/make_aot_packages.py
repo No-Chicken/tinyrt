@@ -8,7 +8,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"tests/package"))
 sys.path.insert(0,str(ROOT/"tests/fixtures"))
-from make_v2_fixtures import envelope, resign
+from make_section_fixtures import envelope, resign
 from reference_package import encode
 from make_packages import identity, trap_after_set
 out,compiler=Path(sys.argv[1]),Path(sys.argv[2]);out.mkdir(parents=True,exist_ok=True)

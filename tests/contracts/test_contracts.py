@@ -55,7 +55,7 @@ class ContractTests(unittest.TestCase):
         spec = json.loads((ROOT / "contracts/wire-v1.json").read_text(encoding="utf-8"))
         store = spec["store"]
         self.assertEqual((store["magic"], store["format_version"], store["record_size"],
-                          store["record_package_offset"]), ("TRDIR002", 2, 80, 36))
+                          store["record_package_offset"]), ("TRDIR001", 1, 80, 36))
         limits = spec["headers"]["runtime/include/tinyrt_store.h"]
         self.assertEqual(limits["TINYRT_STORE_SIZE"], 0x4e0000)
         self.assertEqual(limits["TINYRT_STORE_MAX_PACKAGE_SIZE"], 0x200000)
@@ -98,12 +98,12 @@ class ContractTests(unittest.TestCase):
         for name,offset,size in expected:
             self.assertEqual(fields[name],{'offset':offset,'type':f'u{size*8}le'})
         info=spec['management']['app_info']
-        self.assertEqual((info['opcode'],info['request_size'],info['response_size']),(26,68,164))
-        self.assertEqual(info['response']['app'],{'offset':0,'type':'info72'})
-        self.assertEqual(info['response']['title'],{'offset':72,'type':'utf8[64]'})
+        self.assertEqual((info['opcode'],info['request_size'],info['response_size']),(26,70,248))
+        self.assertEqual(info['response']['app'],{'offset':8,'type':'info72'})
+        self.assertEqual(info['response']['title'],{'offset':80,'type':'utf8[64]'})
         for i,name in enumerate(('key_id','abi_version','permissions','memory_pages','instruction_budget','wasm_size','assets_size')):
-            self.assertEqual(info['response'][name],{'offset':136+4*i,'type':'u32le'})
-        self.assertLessEqual(10+info['response_size'],256)
+            self.assertEqual(info['response'][name],{'offset':144+4*i,'type':'u32le'})
+        self.assertLessEqual(2+info['response_size'],256)
 
 if __name__ == "__main__":
     unittest.main()

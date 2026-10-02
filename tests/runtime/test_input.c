@@ -24,6 +24,24 @@ int main(void) {
         CHECK(tinyrt_runtime_event(r,6,0,0,0)==TINYRT_INVALID_ARGUMENT);
         CHECK(tinyrt_runtime_event(r,1,0,0,0)==TINYRT_OK);
         tinyrt_runtime_destroy(r);}
+    const char *keys[]={"input_key","input_key_only"};
+    for(unsigned i=0;i<2;i++){r=create(keys[i],15,TINYRT_OK);if(!r)continue;
+        CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,6,1,1,0)==TINYRT_OK);
+        CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK&&frame.commands[0].rgb==6);
+        CHECK(tinyrt_runtime_event(r,6,1,0,0)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,6,0,1,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,6,1,2,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,6,1,1,1)==TINYRT_INVALID_ARGUMENT);
+        if(i)CHECK(tinyrt_runtime_event(r,3,1,1,0)==TINYRT_INVALID_ARGUMENT);
+        tinyrt_runtime_destroy(r);}
+    r=create("backend_classic",0,TINYRT_VERIFY_FAILED);
+    /* Zero permissions can query backend, but this fixture also imports DRAW. */
+    CHECK(!r);
+    r=create("backend_classic",1,TINYRT_OK);
+    if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+        CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK&&frame.commands[0].rgb==0);
+        tinyrt_runtime_destroy(r);}
     const char *defaults[]={"pixel_valid","input_disabled"};
     for(unsigned i=0;i<2;++i){r=create(defaults[i],15,TINYRT_OK);if(!r)continue;
         CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
@@ -32,7 +50,7 @@ int main(void) {
 #endif
         CHECK(tinyrt_runtime_event(r,3,0,0,0)==TINYRT_INVALID_ARGUMENT);
         tinyrt_runtime_destroy(r);}
-    const char *bad[]={"input_bad_1","input_bad_8","input_bad_16","input_bad_32","input_bad_55","input_bad_64","input_bad_-1"};
+    const char *bad[]={"input_bad_1","input_bad_8","input_bad_16","input_bad_32","input_bad_55","input_bad_65","input_bad_-1"};
     for(unsigned i=0;i<7;++i){r=create(bad[i],15,TINYRT_OK);if(!r)continue;
         CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_VERIFY_FAILED);tinyrt_runtime_destroy(r);}
     const char *stages[]={"input_event","input_render","input_stop"};

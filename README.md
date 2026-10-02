@@ -1,4 +1,4 @@
-# TinyRT core
+# TinyRT core 0.1.0
 
 TinyRT validates signed application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the
@@ -49,7 +49,7 @@ Existing guests remain valid; new guests require a core revision supporting
 their imports, pinned by the SDK contract snapshot. Unknown imports remain a
 preflight rejection on older hosts. All drawing stays render-only, requires
 DRAW permission, copies values/text, and shares the 128-command limit. The
-host frame including the pixel extension is 137,224 bytes. Runtime and manager
+host frame including the pixel extension requires caller-owned storage sized with `sizeof(tinyrt_frame_t)`. Runtime and manager
 write directly into caller-owned unpublished storage and retain no frame between
 callbacks. Products must budget their display/queue buffers and publish only a
 successful result with a nonzero command count. The core does not render pixels
@@ -84,15 +84,16 @@ allows init/event to request 1..1000 ms scheduling under CLOCK permission,
 default 100 ms. The host schedules a single callback after the previous one
 completes. No catch-up loop or instruction budget increase is implied. See
 [graphics and scheduling](specs/graphics-scheduling-v1.md). The runner reports
-pixel byte count/CRC32 and clock interval; it does not emit raw image bytes.
+pixel byte count/CRC32 and clock interval. Explicit `capture` emits the retained
+frame and `pixels_hex` for desktop PNG review; `time` and `pointer` support input scripts.
 
 Current storage is an immutable package store plus sixteen i32 values per app.
-Package assets fields exist but there is no guest resource-read API or private
-file filesystem yet. The store supports 16 apps and 2 MiB complete packages in
+`asset_read(offset, ptr, len)` reads authenticated current-package resources in
+init/event, at most 4096 bytes per call. There is no private file filesystem yet. The store supports 16 apps and 2 MiB complete packages in
 0x4E0000 bytes, with two 4 KiB directory sectors and variable contiguous extents.
 Updates require separate free staging space; fragmentation or insufficient
 space returns NO_SPACE while preserving the committed version. See
-[store v2](specs/store-v2.md) for the incompatible media format and paging token.
+[store format 1](specs/store.md) for the incompatible media format and paging token.
 Guest host calls are bounded RAM work; the owning service persists successful
 transactions outside guest execution. Physical NVS, BLE and device display
 acceptance remain product tests; host success does not establish hardware safety.
@@ -101,8 +102,7 @@ acceptance remain product tests; host success does not establish hardware safety
 
 Trusted keys now optionally restrict `app_id_prefix`: NULL/empty keeps legacy
 unrestricted trust, a trailing dot matches nonempty descendants (`demo.`), and
-any other value matches one exact app ID. This is host policy, not a package-v1
-encoding change. Independent publishers must receive disjoint scopes. Intentional
+any other value matches one exact app ID. This restriction is host policy; package format 1 records the signing key ID. Independent publishers must receive disjoint scopes. Intentional
 overlap permits key rotation and must be authorized by the product trust policy.
 
 The manager coalesces changed KV into at most one ordinary save attempt per
@@ -123,6 +123,26 @@ repair with the exact original package, replace with a higher version, or
 uninstall. IO/resource/configuration failures are returned rather than treated
 as corruption. A damaged package never causes directory rollback; damaged
 directory structure may still require selecting an older valid directory.
+
+## Package and desktop workflow
+
+The only package format is 1: `TRPKG001`, a 256-byte header and canonical
+16-byte section records for Wasm, optional trusted AOT, and resources. Store
+format and BLE metadata schema are also 1. Firmware/SDK version is 0.1.0.
+Older internal package and directory layouts are incompatible and must be
+rebuilt/reprovisioned through the product deployment flow. See [package](specs/package.md).
+
+`draw_rgb565_scaled` submits one source up to 256×240 and a destination inside
+the viewport. Hosts render it with floor nearest-neighbor scaling. It shares
+the one-image-per-frame limit with `draw_rgb565`. `runtime_backend()` returns
+0 for classic interpreter and 1 for AOT; guests can choose bounded work batches.
+KEY1 is opt-in via `input_events(64)` or combined with touch lifecycle via 120;
+event 6 carries x=1, y=0 release/1 press and arg=0. Cancel clears held input.
+
+SDK `tinyrt.py run` drives this real WAMR classic interpreter and exports
+466×466 round-screen PNGs. Desktop timings are not device FPS, and desktop fonts
+need not match device fonts. The runner does not authenticate a signed package;
+installation trust remains in the package/store path.
 
 ## Source provenance
 

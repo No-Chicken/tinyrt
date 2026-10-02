@@ -9,6 +9,27 @@ static uint32_t size;
 static tinyrt_frame_t frame,previous;
 static tinyrt_package_policy_t policy={1,15,2,100000};
 static tinyrt_runtime_host_t host;
+static tinyrt_runtime_t *create(const char *name);
+static void close_guest(tinyrt_runtime_t*r,size_t baseline);
+static tinyrt_status_t resource_read(void *ctx,uint32_t off,void *out,uint32_t n) {
+ (void)ctx;static const uint8_t resource[]={0,0xf8,0xe0,7,0x1f,0,0xff,0xff};
+ if(off>sizeof(resource)||n>sizeof(resource)-off)return TINYRT_INVALID_ARGUMENT;
+ memcpy(out,resource+off,n);return TINYRT_OK;
+}
+static void scaling_resources(void) {
+ size_t baseline=tinyrt_runtime_memory_used();tinyrt_runtime_t*r=create("scaled_valid");
+ if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK);
+  CHECK(frame.pixel_bytes==8&&frame.commands[1].w==340&&frame.commands[1].h==319);close_guest(r,baseline);}
+ const char *scales[]={"scaled_right","scaled_bottom","scaled_source","scaled_length","scaled_pointer"};
+ for(unsigned i=0;i<5;++i){r=create(scales[i]);if(!r)continue;CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+  CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_VERIFY_FAILED);close_guest(r,baseline);}
+ host.asset_read=resource_read;r=create("asset_valid");
+ if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK);
+  CHECK(frame.pixel_bytes==8&&frame.pixels[1]==0xf8&&frame.pixels[2]==0xe0);close_guest(r,baseline);}
+ const char *resources[]={"asset_range","asset_wrap","asset_pointer","asset_limit"};
+ for(unsigned i=0;i<4;++i){r=create(resources[i]);if(!r)continue;CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_VERIFY_FAILED);close_guest(r,baseline);}
+ host.asset_read=NULL;
+}
 static void fixture(const char *name) {
  char path[1024];snprintf(path,sizeof(path),"%s/%s.wasm",FIXTURE_DIR,name);
  FILE*f=fopen(path,"rb");if(!f)exit(2);
@@ -102,7 +123,7 @@ static void clocks(void) {
  r=create("pixel_valid");if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK&&tinyrt_runtime_clock_interval_ms(r)==100);close_guest(r,baseline);}
 }
 int main(void) {
- CHECK(tinyrt_runtime_system_init()==TINYRT_OK);pixels();skipping();stages_and_permissions();clocks();
+ CHECK(tinyrt_runtime_system_init()==TINYRT_OK);pixels();skipping();stages_and_permissions();clocks();scaling_resources();
  size_t peak=tinyrt_runtime_memory_peak();CHECK(peak>122880);
  tinyrt_runtime_system_shutdown();CHECK(tinyrt_runtime_memory_used()==0&&tinyrt_runtime_memory_peak()==peak);
  CHECK(tinyrt_runtime_system_init()==TINYRT_OK&&tinyrt_runtime_memory_peak()<peak);

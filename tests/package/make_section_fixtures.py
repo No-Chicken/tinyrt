@@ -1,4 +1,4 @@
-"""Independent v2 serializer for C verifier tests; no SDK helpers imported."""
+"""Independent format-1 section serializer for C verifier tests; no SDK helpers imported."""
 import hashlib
 import struct
 from cryptography.hazmat.primitives import hashes
@@ -12,13 +12,13 @@ KEY = ec.derive_private_key(42, ec.SECP256R1())
 def resign(data, key=KEY):
     data = bytearray(data)
     data[152:184] = hashlib.sha256(data[256:]).digest()
-    r, s = utils.decode_dss_signature(key.sign(b"TinyRT-package-v2\0"+data[:192], ec.ECDSA(hashes.SHA256())))
+    r, s = utils.decode_dss_signature(key.sign(b"TinyRT-package-v1\0"+data[:192], ec.ECDSA(hashes.SHA256())))
     data[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
     return bytes(data)
 
 def envelope(header, sections):
     head = bytearray(header)
-    head[:8] = b"TRPKG002"
+    head[:8] = b"TRPKG001"
     cursor = 256 + len(sections)*16
     table, payload = bytearray(), bytearray()
     for kind, content in sections:
@@ -26,7 +26,7 @@ def envelope(header, sections):
         payload += bytes(padding); cursor += padding
         table += struct.pack("<4I", kind, 0, cursor, len(content))
         payload += content; cursor += len(content)
-    struct.pack_into("<HH5I", head, 8, 2, 256, cursor, 256, len(sections), 16, 0)
+    struct.pack_into("<HH5I", head, 8, 1, 256, cursor, 256, len(sections), 16, 0)
     return resign(head + table + payload)
 
 def fixtures(folder, header):
@@ -39,15 +39,15 @@ def fixtures(folder, header):
     native = bytes(meta) + AOT
     good = envelope(header, [(1,WASM),(2,native),(3,b"resources")])
     names = {
-        "v2_wasm_assets": envelope(header, [(1,WASM),(3,b"resources")]),
-        "v2_aot": good,
-        "v2_aot_only": envelope(header, [(2,native)]),
-        "v2_maximum": envelope(header, [(1,WASM),(3,bytes(0x200000-304))]),
+        "section_wasm_assets": envelope(header, [(1,WASM),(3,b"resources")]),
+        "section_aot": good,
+        "section_aot_only": envelope(header, [(2,native)]),
+        "section_maximum": envelope(header, [(1,WASM),(3,bytes(0x200000-304))]),
     }
     previous = bytearray(good); struct.pack_into("<I", previous, 52, 8)
-    names["v2_previous_key"] = resign(previous, ec.derive_private_key(43,ec.SECP256R1()))
+    names["section_previous_key"] = resign(previous, ec.derive_private_key(43,ec.SECP256R1()))
     outside = bytearray(good); outside[56:88] = b"other.app".ljust(32,b"\0")
-    names["v2_outside_demo"] = resign(outside)
+    names["section_outside_demo"] = resign(outside)
     rejects = {}
     def changed(name, offset, value):
         data = bytearray(good); data[offset:offset+len(value)] = value
@@ -77,5 +77,5 @@ def fixtures(folder, header):
     rejects["truncated"] = good[:-1]
     rejects["trailing"] = good+b"\0"
     for name, content in names.items(): (folder/(name+".pkg")).write_bytes(content)
-    for name, content in rejects.items(): (folder/("v2_reject_"+name+".pkg")).write_bytes(content)
-    (folder/"v2_reject.txt").write_text("\n".join("v2_reject_"+name for name in rejects),encoding="ascii")
+    for name, content in rejects.items(): (folder/("section_reject_"+name+".pkg")).write_bytes(content)
+    (folder/"section_reject.txt").write_text("\n".join("section_reject_"+name for name in rejects),encoding="ascii")

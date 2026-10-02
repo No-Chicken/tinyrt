@@ -3,6 +3,11 @@
   "module": "tinyrt",
   "imports": [
     {
+      "name": "asset_read",
+      "signature": "(iii)i",
+      "permission": 0
+    },
+    {
       "name": "clock_interval",
       "signature": "(i)i",
       "permission": 8
@@ -25,6 +30,11 @@
     {
       "name": "draw_rgb565",
       "signature": "(iiiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "draw_rgb565_scaled",
+      "signature": "(iiiiiiii)i",
       "permission": 1
     },
     {
@@ -66,6 +76,11 @@
       "name": "now_ms",
       "signature": "()i",
       "permission": 8
+    },
+    {
+      "name": "runtime_backend",
+      "signature": "()i",
+      "permission": 0
     }
   ],
   "exports": [
@@ -134,12 +149,31 @@
     "import": "input_events",
     "allowed_masks": [
       0,
-      56
+      56,
+      64,
+      120
     ],
     "init_only": true,
     "press": 3,
     "move": 4,
     "cancel": 5,
-    "legacy_release": 1
+    "legacy_release": 1,
+    "user_key": {
+      "event": 6,
+      "key_id": 1,
+      "pressed_y": 1,
+      "released_y": 0,
+      "arg": 0,
+      "power_key_exposed": false
+    }
+  },
+  "resources": {
+    "max_read_bytes": 4096,
+    "stages": [
+      "init",
+      "event"
+    ],
+    "scope": "current authenticated package only",
+    "permission": 0
   }
 }

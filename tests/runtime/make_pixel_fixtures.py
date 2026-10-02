@@ -17,6 +17,15 @@ def fixtures():
     payload = bytes.fromhex("00f8e0071f00ffff")
     mutate = c(0) + c(0x99) + b"\x3a\0\0"
     result = {"pixel_valid": guest(imports, clear + draw + mutate + c(0), payload=payload)}
+    scaled = [("draw_rgb565_scaled", 8),("draw_clear",1)]
+    result["scaled_valid"] = guest(scaled, code([0],1)+code([30,40,340,319,2,2,0,8],0)+c(0),payload=payload)
+    for name,index,value in (("right",0,127),("bottom",1,148),("source",4,257),("length",7,7),("pointer",6,-1)):
+        args_scaled=[30,40,340,319,2,2,0,8];args_scaled[index]=value
+        result["scaled_"+name]=guest(scaled,code([0],1)+code(args_scaled,0)+c(0),payload=payload)
+    resource=[("asset_read",3),("draw_rgb565",6),("draw_clear",1)]
+    result["asset_valid"]=guest(resource,code([0],2)+code([10,20,2,2,0,8],1)+c(0),init=code([0,0,8],0)+c(0))
+    for name,offset,ptr,length in (("range",5,0,8),("wrap",-1,0,8),("pointer",0,-1,8),("limit",0,0,4097)):
+        result["asset_"+name]=guest(resource,c(0),init=code([offset,ptr,length],0)+c(0))
     result["pixel_maximum"] = guest(imports, clear + code([105,113,256,240,0,122880],1) + c(0),
                                     payload=bytes(range(256))*480, memory_pages=2)
     cases = {
@@ -60,8 +69,11 @@ def fixtures():
     input_render=c(0)+b"\x2d\0\0"+call(0)+b"\x1a"+c(0)
     input_event=c(0)+b"\x20\0\x3a\0\0"+c(0)
     result["input_subscribed"]=guest(input_imports,input_render,init=code([0x38],1)+c(0),event=input_event)
+    result["input_key"]=guest(input_imports,input_render,init=code([120],1)+c(0),event=input_event)
+    result["input_key_only"]=guest(input_imports,input_render,init=code([64],1)+c(0),event=input_event)
+    result["backend_classic"]=guest([("draw_clear",1),("runtime_backend",0)],call(1)+call(0)+b"\x1a"+c(0))
     result["input_disabled"]=guest(input_imports,input_render,init=code([0x38],1)+code([0],1)+c(0),event=input_event)
-    for mask in (1,8,16,32,55,64,-1):
+    for mask in (1,8,16,32,55,65,-1):
         result["input_bad_"+str(mask)]=guest(input_imports,clear+c(0),init=code([mask],1)+c(0))
     for stage in ("event","render","stop"):
         bodies={"event":c(0),"render":clear+c(0),"stop":c(0)}

@@ -338,6 +338,10 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_manager_start(m,&clock.id,466,466,&frame)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==1);
     CHECK(tinyrt_manager_event(m,2,0,0,1000,&frame)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==1000);
     CHECK(tinyrt_manager_stop(m)==TINYRT_OK&&tinyrt_manager_clock_interval_ms(m)==100);
+    tinyrt_app_info_t resource=install(m,argv[1],"asset_valid",TINYRT_OK);
+    CHECK(tinyrt_manager_start(m,&resource.id,466,466,&frame)==TINYRT_OK);
+    CHECK(frame.pixel_bytes==8&&frame.pixels[1]==0xf8&&frame.pixels[3]==0x07);
+    CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
     tinyrt_manager_close(m);
 #ifdef TINYRT_TEST_SIGNED_AOT
     test_signed_aot(argv[1]);

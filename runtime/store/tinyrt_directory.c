@@ -37,8 +37,8 @@ bool tr_app_equal(const tinyrt_app_info_t *a,const tinyrt_app_info_t *b) {
     return a->package_size==b->package_size && tr_identity_equal(&a->id,&b->id);
 }
 void tr_directory_encode(const tr_directory_t *d,uint8_t *b) {
-    memset(b,255,4096);memcpy(b,"TRDIR002",8);
-    put32(b+8,2);put32(b+12,d->count);put64(b+16,d->generation);memset(b+24,0,8);
+    memset(b,255,4096);memcpy(b,"TRDIR001",8);
+    put32(b+8,1);put32(b+12,d->count);put64(b+16,d->generation);memset(b+24,0,8);
     for(uint32_t i=0;i<d->count;++i) {
         const tr_record_t *r=&d->records[i];uint8_t *p=b+32+80*i;
         memset(p,0,80);memcpy(p,r->app.id.app_id,strlen(r->app.id.app_id));
@@ -49,7 +49,7 @@ void tr_directory_encode(const tr_directory_t *d,uint8_t *b) {
 }
 static bool decode(const uint8_t *b,tr_directory_t *d) {
     memset(d,0,sizeof(*d));
-    if(memcmp(b,"TRDIR002",8)||get32(b+8)!=2||get32(b+12)>TINYRT_STORE_MAX_APPS||!get64(b+16)||
+    if(memcmp(b,"TRDIR001",8)||get32(b+8)!=1||get32(b+12)>TINYRT_STORE_MAX_APPS||!get64(b+16)||
        get32(b+4092)!=0||get32(b+4088)!=crc32(b,4088)||!all_value(b+24,8,0)) return false;
     d->count=get32(b+12);d->generation=get64(b+16);
     if(!all_value(b+32+80*d->count,4088-(32+80*d->count),255)) return false;
@@ -110,8 +110,14 @@ tinyrt_status_t tr_recover(tinyrt_store_t *s) {
     for(unsigned sector=0;sector<2;++sector) {
         result=s->io.read(s->io.ctx,sector*4096,b,4096);
         if(result!=TINYRT_OK) goto done;
-        if(!memcmp(b,"TRDIR001",8)) {result=TINYRT_CORRUPT;goto done;}
         valid[sector]=decode(b,&d[sector]);
+        /* 已提交且 CRC 完整的其它布局需要显式迁移；不能把它当作掉电
+         * 残片，选另一页后覆盖未知记录。这里只识别格式族，不解码旧布局。 */
+        if (!memcmp(b,"TRDIR",5) && get32(b+4092)==0 &&
+            get32(b+4088)==crc32(b,4088) &&
+            (memcmp(b,"TRDIR001",8) || get32(b+8)!=1)) {
+            result=TINYRT_CORRUPT;goto done;
+        }
     }
     if(valid[0]&&valid[1]&&d[0].generation==d[1].generation&&!directories_equal(&d[0],&d[1])) {
         result=TINYRT_CORRUPT;goto done;

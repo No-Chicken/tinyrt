@@ -1,13 +1,29 @@
 """Integration contract for the core's stdin-driven Wasm runner."""
-import json, os, subprocess, unittest, zlib
+import json, os, subprocess, sys, unittest, zlib
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[2]
 RUNNER=Path(os.environ.get('TINYRT_RUNNER',str(ROOT/'build/tinyrt-run.exe')))
 FIXTURES=Path(os.environ.get('TINYRT_FIXTURE_DIR',str(ROOT/'tests/runtime/fixtures')))
 class Runner(unittest.TestCase):
+    def event_guest(self, name, input_mask=None):
+        sys.path.insert(0,str(ROOT/'tests/runtime'))
+        from make_fixtures import c,call
+        from make_round_fixtures import guest
+        folder=RUNNER.parent/'runner-fixtures';folder.mkdir(exist_ok=True)
+        path=folder/f'{name}.wasm'
+        imports=[('draw_clear',1)]
+        init=c(0)
+        if input_mask is not None:
+            imports.append(('input_events',1));init=c(input_mask)+call(1)+b'\x1a'+c(0)
+        # Count delivered events and expose the last kind in the rendered color.
+        event=c(0)+c(0)+b'\x2d\0\0'+c(1)+b'\x6a\x3a\0\0'+c(1)+b'\x20\0\x3a\0\0'+c(0)
+        render=c(0)+b'\x2d\0\0'+c(256)+b'\x6c'+c(1)+b'\x2d\0\0\x6a'+call(0)+b'\x1a'+c(0)
+        path.write_bytes(guest(imports,render,init=init,event=event,payload=b'\0\0'))
+        return path
     def run_guest(self, name, commands='', *options):
         self.assertTrue(RUNNER.is_file(), 'tinyrt-run executable is required')
-        p=subprocess.run([str(RUNNER),str(FIXTURES/f'{name}.wasm'),*options],input=commands,text=True,capture_output=True,timeout=20)
+        guest=name if isinstance(name,Path) else FIXTURES/f'{name}.wasm'
+        p=subprocess.run([str(RUNNER),str(guest),*options],input=commands,text=True,capture_output=True,timeout=20)
         records=[json.loads(s) for s in p.stdout.splitlines() if s.startswith('{')]
         return p,records
     def test_events_and_restart_preserve_committed_values(self):
@@ -84,4 +100,81 @@ class Runner(unittest.TestCase):
         p,r=self.run_guest('clock_valid','tick 1000\n')
         self.assertEqual(p.returncode,0,p.stdout+p.stderr)
         self.assertEqual([x['clock_interval_ms'] for x in r],[1,1000,100])
+    def test_advance_honors_changed_guest_clock_without_capture_callbacks(self):
+        # This guest replaces its interval with CLOCK arg (the virtual timestamp).
+        p,r=self.run_guest('clock_valid','advance 7\ncapture\nadvance 17\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['now_ms'] for x in r if x['phase']=='tick'],[1,2,4,8,16])
+        self.assertEqual([x['now_ms'] for x in r if x['phase']=='capture'],[7,17])
+        self.assertEqual([x['clock_interval_ms'] for x in r if x['phase']=='tick'],[1,2,4,8,16])
+        self.assertEqual(len([x for x in r if x['phase'] not in ('capture','shutdown')]),6)
+    def test_advance_keeps_pixels_when_latest_callback_skips(self):
+        p,r=self.run_guest('pixel_then_skip','advance 100\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        tick=next(x for x in r if x['phase']=='tick')
+        capture=next(x for x in r if x['phase']=='capture')
+        self.assertEqual(tick['frame'],[])
+        self.assertEqual(capture['frame'],r[0]['frame'])
+        self.assertEqual(capture['pixels_hex'],'00f8e0071f00ffff')
+        self.assertEqual(capture['pixel_crc32'],r[0]['pixel_crc32'])
+    def test_virtual_input_delivers_key_press_and_release_at_script_time(self):
+        # Observe both payload fields through the real guest, not just event kind.
+        sys.path.insert(0,str(ROOT/'tests/runtime'))
+        from make_fixtures import c,call
+        from make_round_fixtures import guest
+        folder=RUNNER.parent/'runner-fixtures';folder.mkdir(exist_ok=True)
+        path=folder/'key-state.wasm'
+        render=c(0)+b'\x2d\0\0'+c(256)+b'\x6c'+c(1)+b'\x2d\0\0\x6a'+call(0)+b'\x1a'+c(0)
+        event=c(0)+b'\x20\1\x3a\0\0'+c(1)+b'\x20\2\x3a\0\0'+c(0)
+        path.write_bytes(guest([('draw_clear',1),('input_events',1)],render,
+                              init=c(120)+call(1)+b'\x1a'+c(0),event=event))
+        p,r=self.run_guest(path,'advance 5\nkey 1 1\ncapture\nadvance 9\nkey 1 0\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([(x['now_ms'],x['frame'][0]['rgb']) for x in r if x['phase']=='key'],[(5,257),(9,256)])
+        self.assertEqual([x['now_ms'] for x in r if x['phase']=='capture'],[5,9])
+        self.assertFalse(any(x['phase']=='tick' for x in r))
+    def test_advance_requires_monotonic_bounded_time_and_running_guest(self):
+        for commands in ('advance 60001\n','advance 7\nadvance 6\n','stop\nadvance 10\n'):
+            with self.subTest(commands=commands):
+                p,_=self.run_guest('valid',commands)
+                self.assertEqual(p.returncode,2)
+        p,r=self.run_guest('clock_valid','time 4\nadvance 5\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['now_ms'] for x in r if x['phase']=='tick'],[5])
+    def test_draw_only_advance_skips_clock_but_explicit_tick_stays_strict(self):
+        guest=self.event_guest('draw-only')
+        p,r=self.run_guest(guest,'advance 330\ncapture\ntime 500\nadvance 830\ncapture\n','--permissions','1')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['phase'] for x in r],['init','capture','capture','shutdown'])
+        self.assertEqual([x['now_ms'] for x in r if x['phase']=='capture'],[330,830])
+        self.assertTrue(all(x['frame'][0]['rgb']==0 for x in r if x['phase']=='capture'))
+        p,r=self.run_guest(guest,'tick 100\n','--permissions','1')
+        self.assertNotEqual(p.returncode,0)
+        self.assertEqual(r[-2]['phase'],'tick')
+        self.assertNotEqual(r[-2]['status'],0)
+    def test_scripted_input_filters_permissions_and_legacy_subscription(self):
+        guest=self.event_guest('release-only')
+        commands='pointer 3 20 30\npointer 4 21 31\npointer 5 21 31\nkey 1 1\npointer 1 21 31\ncapture\n'
+        p,r=self.run_guest(guest,commands,'--permissions','3')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['phase'] for x in r],['init','pointer','capture','shutdown'])
+        self.assertEqual(r[1]['frame'][0]['rgb'],257)
+        p,r=self.run_guest(guest,commands,'--permissions','1')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['phase'] for x in r],['init','capture','shutdown'])
+        self.assertEqual(r[1]['frame'][0]['rgb'],0)
+        p,r=self.run_guest(guest,'touch 21 31\n','--permissions','1')
+        self.assertNotEqual(p.returncode,0)  # Explicit diagnostic still checks INPUT.
+        self.assertEqual(r[-2]['phase'],'touch')
+        self.assertNotEqual(r[-2]['status'],0)
+    def test_scripted_input_delivers_only_subscribed_lifecycle_and_key(self):
+        guest=self.event_guest('key-only',64)
+        p,r=self.run_guest(guest,'pointer 3 20 30\npointer 4 21 31\npointer 5 21 31\nkey 1 1\nkey 1 0\npointer 1 21 31\n','--permissions','3')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        # RELEASE is the legacy event and is delivered even with a key-only mask.
+        self.assertEqual([x['frame'][0]['rgb'] for x in r if x['phase'] in ('key','pointer')],[262,518,769])
+        guest=self.event_guest('lifecycle-only',56)
+        p,r=self.run_guest(guest,'pointer 3 20 30\npointer 4 21 31\npointer 5 21 31\nkey 1 1\npointer 1 21 31\n','--permissions','3')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual([x['frame'][0]['rgb'] for x in r if x['phase']=='pointer'],[259,516,773,1025])
 if __name__=='__main__':unittest.main()

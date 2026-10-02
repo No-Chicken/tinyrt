@@ -4,7 +4,7 @@ from make_fixtures import u, s, sec, c, call
 
 
 def guest(imports, render, stop=None, *, init=None, event=None, payload=b"TEXT", stop_type=0, stop_kind=0, memory_pages=1):
-    counts = [0, 1, 2, 4, 5, 6, 7, 9]
+    counts = [0, 1, 2, 4, 5, 6, 7, 9, 3, 8]
     types = u(len(counts)) + b"".join(b"\x60" + u(n) + b"\x7f" * n + b"\x01\x7f" for n in counts)
     imp = u(len(imports)) + b"".join(s("tinyrt") + s(name) + b"\0" + u(counts.index(n)) for name, n in imports)
     bodies = [c(0) if init is None else init, c(-1) if event is None else event, render]

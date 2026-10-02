@@ -40,32 +40,48 @@
       "TINYRT_CAP_STORAGE": 32,
       "TINYRT_OP_APP_INFO": 26,
       "TINYRT_OP_RUNTIME_INFO": 27,
-      "TINYRT_CAP_PACKAGE_V2": 64
+      "TINYRT_CAP_PACKAGE_SECTIONS": 64
     }
   },
   "package": {
     "magic": "TRPKG001",
-    "signature_domain_hex": "54696e7952542d7061636b6167652d763100",
+    "format_version": 1,
     "header_size": 256,
-    "offsets": {
-      "format_version": 8,
-      "header_size": 10,
-      "total_size": 12,
-      "wasm_offset": 16,
-      "wasm_size": 20,
-      "assets_offset": 24,
-      "assets_size": 28,
-      "app_version": 32,
-      "abi_version": 36,
-      "permissions": 40,
-      "memory_pages": 44,
-      "instruction_budget": 48,
-      "key_id": 52,
-      "app_id": 56,
-      "title": 88,
-      "payload_sha256": 152,
-      "signature": 192
-    }
+    "signature_domain_hex": "54696e7952542d7061636b6167652d763100",
+    "max_package_size": 2097152,
+    "table_offset": 256,
+    "entry_size": 16,
+    "max_sections": 3,
+    "section_alignment": 4,
+    "padding": "minimal zero bytes between sections; no trailing padding",
+    "section_kinds": {
+      "wasm": 1,
+      "aot": 2,
+      "resources": 3
+    },
+    "entry_fields": [
+      "kind:u32le",
+      "flags:u32le=0",
+      "offset:u32le",
+      "size:u32le"
+    ],
+    "aot_metadata_size": 256,
+    "aot_offsets": {
+      "metadata_version": 0,
+      "metadata_size": 2,
+      "format_version": 4,
+      "safety_flags": 8,
+      "target_arch": 16,
+      "target_cpu": 32,
+      "wamr_commit": 48,
+      "llvm_commit": 68,
+      "patch_sha256": 88,
+      "compat_id": 120,
+      "options_sha256": 152,
+      "compiler_sha256": 184,
+      "source_wasm_sha256": 216
+    },
+    "required_safety_flags": 7
   },
   "management": {
     "magic": 167,
@@ -259,51 +275,6 @@
       "semantics": "Read-only committed storage; installed_count and allocation include quarantine. Active transfer returns BUSY. Generation is the opaque inventory revision. Flag bit 0 marks validity of only the six internal/external BSP RAM fields at offsets 52..72; when unavailable the producer writes these six as zero and clients expose them as null. The runtime heap limit/used/peak fields at 76..84 remain valid independently. Unknown flags or schema are rejected. Runtime heap tracks the bounded runtime allocator; manager/store and system overhead are excluded."
     },
     "app_info": {
-      "opcode": 26,
-      "request_size": 68,
-      "request": "full identity68 (app_id[32], version:u32le, whole_package_sha256[32])",
-      "response_size": 164,
-      "response": {
-        "app": {
-          "offset": 0,
-          "type": "info72"
-        },
-        "title": {
-          "offset": 72,
-          "type": "utf8[64]"
-        },
-        "key_id": {
-          "offset": 136,
-          "type": "u32le"
-        },
-        "abi_version": {
-          "offset": 140,
-          "type": "u32le"
-        },
-        "permissions": {
-          "offset": 144,
-          "type": "u32le"
-        },
-        "memory_pages": {
-          "offset": 148,
-          "type": "u32le"
-        },
-        "instruction_budget": {
-          "offset": 152,
-          "type": "u32le"
-        },
-        "wasm_size": {
-          "offset": 156,
-          "type": "u32le"
-        },
-        "assets_size": {
-          "offset": 160,
-          "type": "u32le"
-        }
-      },
-      "semantics": "Only fully verified healthy metadata matching the requested identity. Title is canonical NUL-terminated UTF-8 with zero padding. Quarantined identities use the quarantine list; unverified headers are never metadata."
-    },
-    "app_info_v2": {
       "hello_capability_bit": 64,
       "opcode": 26,
       "request_size": 70,
@@ -311,7 +282,7 @@
         "schema": {
           "offset": 0,
           "type": "u16le",
-          "value": 2
+          "value": 1
         },
         "identity": {
           "offset": 2,
@@ -401,8 +372,7 @@
           "type": "bytes[32]"
         }
       },
-      "legacy_v2_request_status": 2,
-      "semantics": "Legacy request68 remains v1-only. Schema2 accepts either format. Signature authorization is device-owned; metadata safety flags are authenticated claims."
+      "semantics": "Schema 1 section metadata only; device authorizes the signature and execution backend."
     },
     "runtime_info": {
       "hello_capability_bit": 64,
@@ -459,53 +429,12 @@
     }
   },
   "store": {
-    "magic": "TRDIR002",
-    "format_version": 2,
+    "magic": "TRDIR001",
+    "format_version": 1,
     "directory_sectors": 2,
     "record_size": 80,
     "record_package_offset": 36,
     "allocation_alignment": 4096,
-    "allocation": "first fit contiguous extents; current committed healthy and quarantined extents excluded; updates use separate staging; no compaction",
-    "legacy": "TRDIR001 is rejected without formatting"
-  },
-  "package_v2": {
-    "magic": "TRPKG002",
-    "format_version": 2,
-    "header_size": 256,
-    "signature_domain_hex": "54696e7952542d7061636b6167652d763200",
-    "max_package_size": 2097152,
-    "table_offset": 256,
-    "entry_size": 16,
-    "max_sections": 3,
-    "section_alignment": 4,
-    "padding": "minimal zero bytes between sections; no trailing padding",
-    "section_kinds": {
-      "wasm": 1,
-      "aot": 2,
-      "resources": 3
-    },
-    "entry_fields": [
-      "kind:u32le",
-      "flags:u32le=0",
-      "offset:u32le",
-      "size:u32le"
-    ],
-    "aot_metadata_size": 256,
-    "aot_offsets": {
-      "metadata_version": 0,
-      "metadata_size": 2,
-      "format_version": 4,
-      "safety_flags": 8,
-      "target_arch": 16,
-      "target_cpu": 32,
-      "wamr_commit": 48,
-      "llvm_commit": 68,
-      "patch_sha256": 88,
-      "compat_id": 120,
-      "options_sha256": 152,
-      "compiler_sha256": 184,
-      "source_wasm_sha256": 216
-    },
-    "required_safety_flags": 7
+    "allocation": "first fit contiguous extents; current committed healthy and quarantined extents excluded; updates use separate staging; no compaction"
   }
 }

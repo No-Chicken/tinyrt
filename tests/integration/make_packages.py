@@ -51,9 +51,9 @@ def main(folder):
           ("invalid-wasm",unknown,"demo.invalid",1)]
     rounds=round_fixtures()
     pixels=pixel_fixtures()
-    for name in ("pixel_then_skip","clock_valid"):
+    for name in ("pixel_then_skip","clock_valid","asset_valid"):
         wasm=folder/(name+".wasm");wasm.write_bytes(pixels[name])
-        jobs.append((name,wasm,"demo.pixels" if name=="pixel_then_skip" else "demo.clock",1))
+        jobs.append((name,wasm,"demo."+name,1))
     repair=folder/"stop_repair.wasm";repair.write_bytes(rounds["stop_valid"])
     jobs.append(("stop_repair",repair,"demo.stop",6))
     for version,name in enumerate(("stop_valid","stop_failure","stop_trap","stop_spin","stop_bad_signature"),1):
@@ -61,7 +61,8 @@ def main(folder):
         jobs.append((name,wasm,"demo.stop",version))
     for name,wasm,app_id,version in jobs:
         output=folder/(name+".trpkg")
-        output.write_bytes(encode(wasm.read_bytes(),app_id=app_id,title=name,version=version))
+        output.write_bytes(encode(wasm.read_bytes(),app_id=app_id,title=name,version=version,
+                                 assets=bytes.fromhex("00f8e0071f00ffff") if name=="asset_valid" else b""))
         identity(output)
     bad=bytearray((folder/"counter-v2.trpkg").read_bytes()); bad[200]^=1
     output=folder/"invalid-signature.trpkg"; output.write_bytes(bad); identity(output)
@@ -72,7 +73,7 @@ def main(folder):
     wasm=(ROOT/"tests/fixtures/guests/counter-v1.wasm").read_bytes()
     output=folder/"counter-maximum.trpkg"
     output.write_bytes(encode(wasm,app_id="demo.maximum",title="Maximum package",version=1,
-                             assets=b"\xa5"*(0x200000-256-len(wasm))))
+                             assets=b"\xa5"*(0x200000-((288+len(wasm)+3)&~3))))
     identity(output)
     (folder/"publisher2.bin").write_bytes(ec.derive_private_key(2,ec.SECP256R1()).public_key().public_bytes(
         serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))

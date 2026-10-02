@@ -45,7 +45,7 @@ static tinyrt_app_info_t fixture(unsigned slot,const char *id,uint32_t ver) {
 /* Independent on-media fixture builder; does not call the production encoder. */
 static void directory(unsigned sector,uint64_t gen,const tinyrt_app_info_t *a,const unsigned *slots,unsigned n) {
  uint8_t *b=nor.bytes+sector*4096;memset(b,255,4096);
- memcpy(b,"TRDIR002",8);put32(b+8,2);put32(b+12,n);put64(b+16,gen);memset(b+24,0,8);
+ memcpy(b,"TRDIR001",8);put32(b+8,1);put32(b+12,n);put64(b+16,gen);memset(b+24,0,8);
  for(unsigned i=0;i<n;++i) {
   uint8_t *p=b+32+80*i;memcpy(p,a[i].id.app_id,32);put32(p+32,a[i].id.version);
   put32(p+36,fixture_offset(slots[i]));put32(p+40,a[i].package_size);memcpy(p+44,a[i].id.sha256,32);put32(p+76,0);
@@ -206,8 +206,8 @@ static uint32_t get32(const uint8_t *b) {
 static uint64_t get64(const uint8_t *b) {return get32(b)|((uint64_t)get32(b+4)<<32);}
 static uint32_t committed_offset(const char *id) {
  const uint8_t *b=nor.bytes;
- if(!memcmp(b+4096,"TRDIR002",8)&&get64(b+4096+16)>get64(b+16))b+=4096;
- CHECK(!memcmp(b,"TRDIR002",8)&&get32(b+8)==2);
+ if(!memcmp(b+4096,"TRDIR001",8)&&get64(b+4096+16)>get64(b+16))b+=4096;
+ CHECK(!memcmp(b,"TRDIR001",8)&&get32(b+8)==1);
  for(uint32_t i=0;i<get32(b+12);i++)if(!strcmp((const char*)b+32+80*i,id))return get32(b+32+80*i+36);
  CHECK(0);return 0;
 }
@@ -289,8 +289,8 @@ static void test_v2_structural_bounds_and_legacy_refusal(void) {
  fake_nor_init(&nor);directory(0,1,NULL,NULL,0);put32(nor.bytes+12,17);put32(nor.bytes+4088,crc32(nor.bytes,4088));
  CHECK(open_store(&s)==TINYRT_CORRUPT);
  /* Independently encoded legacy empty directory must not be mistaken for a
-  * torn first-provisioning write, even when the other sector contains v2. */
- fake_nor_init(&nor);directory(0,1,NULL,NULL,0);memcpy(nor.bytes,"TRDIR001",8);put32(nor.bytes+8,1);
+  * torn first-provisioning write, even when the other sector contains the current layout. */
+ fake_nor_init(&nor);directory(0,1,NULL,NULL,0);memcpy(nor.bytes,"TRDIR002",8);put32(nor.bytes+8,2);
  put32(nor.bytes+4088,crc32(nor.bytes,4088));CHECK(open_store(&s)==TINYRT_CORRUPT);
  directory(1,2,NULL,NULL,0);CHECK(open_store(&s)==TINYRT_CORRUPT && !nor.mutations);
 }

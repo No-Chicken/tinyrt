@@ -1,0 +1,295 @@
+diff --git a/build-scripts/config_common.cmake b/build-scripts/config_common.cmake
+index 8cdce4a01750fb0c151931479351aaf6aa9af55a..ea28a9c9b08b16606cec5c5dedf882b7ac5c96ce 100644
+--- a/build-scripts/config_common.cmake
++++ b/build-scripts/config_common.cmake
+@@ -677,6 +677,10 @@ if (WAMR_BUILD_INSTRUCTION_METERING EQUAL 1)
+   message ("     Instruction metering enabled")
+   add_definitions (-DWASM_ENABLE_INSTRUCTION_METERING=1)
+ endif ()
++if (WAMR_BUILD_LOOP_POLL EQUAL 1)
++  message ("     Independent loop cancellation enabled")
++  add_definitions (-DWASM_ENABLE_LOOP_POLL=1)
++endif ()
+ if (WAMR_BUILD_EXTENDED_CONST_EXPR EQUAL 1)
+   message ("     Extended constant expression enabled")
+   add_definitions(-DWASM_ENABLE_EXTENDED_CONST_EXPR=1)
+diff --git a/build-scripts/version.cmake b/build-scripts/version.cmake
+index fcd5f263e12ea396d8129b3313d062338bd89748..1e2ceb01e2ff1e15dc2cb9225c5432f73560f197 100644
+--- a/build-scripts/version.cmake
++++ b/build-scripts/version.cmake
+@@ -16,6 +16,7 @@ message("-- WAMR version: ${WAMR_VERSION_MAJOR}.${WAMR_VERSION_MINOR}.${WAMR_VER
+ configure_file(
+   ${WAMR_ROOT_DIR}/core/version.h.in
+   ${WAMR_ROOT_DIR}/core/version.h
++  NEWLINE_STYLE UNIX
+ )
+ 
+ # Set the library version and SOVERSION
+diff --git a/core/config.h b/core/config.h
+index 3ee0b2cd923e8f63d20a8b4f5da1ff335fd6a834..bcc3009506dbf20cb4fccc4a28632ba49a278531 100644
+--- a/core/config.h
++++ b/core/config.h
+@@ -224,6 +224,11 @@
+ #define WASM_ENABLE_THREAD_MGR 0
+ #endif
+ 
++/* Host cancellation without guest threads or shared memory. */
++#ifndef WASM_ENABLE_LOOP_POLL
++#define WASM_ENABLE_LOOP_POLL 0
++#endif
++
+ /* Source debugging */
+ #ifndef WASM_ENABLE_DEBUG_INTERP
+ #define WASM_ENABLE_DEBUG_INTERP 0
+diff --git a/core/iwasm/common/wasm_runtime_common.c b/core/iwasm/common/wasm_runtime_common.c
+index 943b46fc4c330b69aeebce3a87432b30ae77c1af..84f85c868757d25dff6d9c4682a55e43e6a61001 100644
+--- a/core/iwasm/common/wasm_runtime_common.c
++++ b/core/iwasm/common/wasm_runtime_common.c
+@@ -3231,6 +3231,22 @@ wasm_runtime_terminate(WASMModuleInstanceCommon *module_inst_comm)
+     wasm_set_exception(module_inst, "terminated by user");
+ }
+ 
++void
++wasm_runtime_request_exec_env_termination(WASMExecEnv *exec_env)
++{
++    if (exec_env)
++        WASM_SUSPEND_FLAGS_FETCH_OR(exec_env->suspend_flags,
++                                   WASM_SUSPEND_FLAG_TERMINATE);
++}
++
++bool
++wasm_runtime_is_exec_env_terminated(WASMExecEnv *exec_env)
++{
++    return exec_env
++           && (WASM_SUSPEND_FLAGS_GET(exec_env->suspend_flags)
++               & WASM_SUSPEND_FLAG_TERMINATE) != 0;
++}
++
+ void
+ wasm_runtime_set_custom_data_internal(
+     WASMModuleInstanceCommon *module_inst_comm, void *custom_data)
+diff --git a/core/iwasm/include/wasm_export.h b/core/iwasm/include/wasm_export.h
+index 81efb8f6f7f9aa269a46126e5864b26adaa9d9f4..6f061610f153f97cfacf7461f75ff16414c18b1a 100644
+--- a/core/iwasm/include/wasm_export.h
++++ b/core/iwasm/include/wasm_export.h
+@@ -1318,6 +1318,15 @@ wasm_runtime_clear_exception(wasm_module_inst_t module_inst);
+ WASM_RUNTIME_API_EXTERN void
+ wasm_runtime_terminate(wasm_module_inst_t module_inst);
+ 
++/** Atomically request cancellation of one live execution environment. The
++ * owner must keep exec_env alive until the supervising caller has completed.
++ * No exception buffer or guest state is touched by this cross-thread API. */
++WASM_RUNTIME_API_EXTERN void
++wasm_runtime_request_exec_env_termination(wasm_exec_env_t exec_env);
++
++WASM_RUNTIME_API_EXTERN bool
++wasm_runtime_is_exec_env_terminated(wasm_exec_env_t exec_env);
++
+ /**
+  * Set custom data to WASM module instance.
+  * Note:
+diff --git a/core/iwasm/interpreter/wasm_interp_classic.c b/core/iwasm/interpreter/wasm_interp_classic.c
+index 9f7e03e265714cc2ea9e6b459e8224518f98d6fd..fc25ee4c1ef37c85c1396217731623f3dea57ff4 100644
+--- a/core/iwasm/interpreter/wasm_interp_classic.c
++++ b/core/iwasm/interpreter/wasm_interp_classic.c
+@@ -1451,6 +1451,17 @@ wasm_interp_call_func_import(WASMModuleInstance *module_inst,
+         WASM_SUSPEND_FLAGS_UNLOCK(exec_env->wait_lock);               \
+     } while (0)
+ #endif /* WASM_ENABLE_DEBUG_INTERP */
++#elif WASM_ENABLE_LOOP_POLL != 0
++#if WASM_SUSPEND_FLAGS_IS_ATOMIC == 0
++#error "Independent loop polling requires atomic cancellation flags"
++#endif
++#define CHECK_SUSPEND_FLAGS()                                      \
++    do {                                                          \
++        if (wasm_runtime_is_exec_env_terminated(exec_env)) {        \
++            wasm_set_exception(module, "terminated by host");     \
++            goto got_exception;                                   \
++        }                                                         \
++    } while (0)
+ #endif /* WASM_ENABLE_THREAD_MGR */
+ 
+ #if WASM_ENABLE_THREAD_MGR != 0 && WASM_ENABLE_DEBUG_INTERP != 0
+@@ -2218,7 +2229,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_BR)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, depth);
+@@ -2239,7 +2250,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_BR_IF)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, depth);
+@@ -2251,7 +2262,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_BR_TABLE)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, count);
+@@ -2268,7 +2279,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                     bh_list_first_elem(module->module->br_table_cache_list);
+                 BrTableCache *node_next;
+ 
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 lidx = POP_I32();
+@@ -2306,7 +2317,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_CALL)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, fidx);
+@@ -2324,7 +2335,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ #if WASM_ENABLE_TAIL_CALL != 0
+             HANDLE_OP(WASM_OP_RETURN_CALL)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, fidx);
+@@ -2352,7 +2363,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ #if WASM_ENABLE_TAIL_CALL != 0
+                 opcode = *(frame_ip - 1);
+ #endif
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+ 
+@@ -2631,7 +2642,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ #if WASM_ENABLE_GC != 0
+             HANDLE_OP(WASM_OP_CALL_REF)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, type_index);
+@@ -2648,7 +2659,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_RETURN_CALL_REF)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, type_index);
+@@ -2686,7 +2697,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_BR_ON_NULL)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, depth);
+@@ -2701,7 +2712,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             HANDLE_OP(WASM_OP_BR_ON_NON_NULL)
+             {
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                 CHECK_SUSPEND_FLAGS();
+ #endif
+                 read_leb_uint32(frame_ip, frame_ip_end, depth);
+@@ -3305,7 +3316,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                         int32 heap_type, heap_type_dst;
+                         uint8 castflags;
+ 
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                         CHECK_SUSPEND_FLAGS();
+ #endif
+                         castflags = *frame_ip++;
+@@ -6200,7 +6211,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                         if (ret == (uint32)-1)
+                             goto got_exception;
+ 
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                         CHECK_SUSPEND_FLAGS();
+ #endif
+ 
+@@ -6224,7 +6235,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+                         if (ret == (uint32)-1)
+                             goto got_exception;
+ 
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+                         CHECK_SUSPEND_FLAGS();
+ #endif
+ 
+@@ -6836,7 +6847,7 @@ wasm_interp_call_func_bytecode(WASMModuleInstance *module,
+ 
+             wasm_exec_env_set_cur_frame(exec_env, frame);
+         }
+-#if WASM_ENABLE_THREAD_MGR != 0
++#if WASM_ENABLE_THREAD_MGR != 0 || WASM_ENABLE_LOOP_POLL != 0
+         CHECK_SUSPEND_FLAGS();
+ #endif
+         HANDLE_OP_END();
+diff --git a/core/shared/utils/bh_atomic.h b/core/shared/utils/bh_atomic.h
+index 57cb4d1c910bc3acb86fc8420a8ac0e8a3feaf1a..9fc58438c889c985adcb94d4b8cc8a212503b72f 100644
+--- a/core/shared/utils/bh_atomic.h
++++ b/core/shared/utils/bh_atomic.h
+@@ -9,6 +9,13 @@
+ #include "bh_platform.h"
+ #include "gnuc.h"
+ 
++#ifdef _MSC_VER
++#include <intrin.h>
++#ifndef BH_ATOMIC_32_IS_ATOMIC
++#define BH_ATOMIC_32_IS_ATOMIC 1
++#endif
++#endif
++
+ #ifdef __cplusplus
+ extern "C" {
+ #endif
+@@ -182,6 +189,21 @@ nonatomic_64_fetch_sub(bh_atomic_64_t *p, uint64 val)
+ 
+ #if BH_ATOMIC_32_IS_ATOMIC != 0
+ 
++#ifdef _MSC_VER
++#define BH_ATOMIC_32_LOAD(v) \
++    ((uint32)_InterlockedCompareExchange((volatile long *)&(v), 0, 0))
++#define BH_ATOMIC_32_STORE(v, val) \
++    ((void)_InterlockedExchange((volatile long *)&(v), (long)(val)))
++#define BH_ATOMIC_32_FETCH_OR(v, val) \
++    ((uint32)_InterlockedOr((volatile long *)&(v), (long)(val)))
++#define BH_ATOMIC_32_FETCH_AND(v, val) \
++    ((uint32)_InterlockedAnd((volatile long *)&(v), (long)(val)))
++#define BH_ATOMIC_32_FETCH_ADD(v, val) \
++    ((uint32)_InterlockedExchangeAdd((volatile long *)&(v), (long)(val)))
++#define BH_ATOMIC_32_FETCH_SUB(v, val) \
++    ((uint32)_InterlockedExchangeAdd((volatile long *)&(v), -(long)(val)))
++#else
++
+ #define BH_ATOMIC_32_LOAD(v) __atomic_load_n(&(v), __ATOMIC_SEQ_CST)
+ #define BH_ATOMIC_32_STORE(v, val) __atomic_store_n(&(v), val, __ATOMIC_SEQ_CST)
+ #define BH_ATOMIC_32_FETCH_OR(v, val) \
+@@ -192,6 +214,7 @@ nonatomic_64_fetch_sub(bh_atomic_64_t *p, uint64 val)
+     __atomic_fetch_add(&(v), (val), __ATOMIC_SEQ_CST)
+ #define BH_ATOMIC_32_FETCH_SUB(v, val) \
+     __atomic_fetch_sub(&(v), (val), __ATOMIC_SEQ_CST)
++#endif
+ 
+ #else /* else of BH_ATOMIC_32_IS_ATOMIC != 0 */
+ 

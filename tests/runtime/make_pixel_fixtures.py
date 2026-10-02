@@ -44,6 +44,29 @@ def fixtures():
     result["pixel_then_skip"] = guest(imports,
         c(16)+b"\x2d\0\0\x04\x40"+skip+b"\x05"+clear+draw+b"\x0b"+c(0),
         event=c(16)+c(16)+b"\x2d\0\0"+c(1)+b"\x73\x3a\0\0"+c(0),payload=payload)
+    observed_imports = imports + [("now_ms", 0)]
+    result["frame_observed"] = guest(observed_imports, clear+draw+code([],3)+c(0),
+                                      event=code([],3)+c(0),stop=code([],3)+c(0),payload=payload)
+    result["frame_partial_failure"] = guest(imports,clear+draw+c(-1),payload=payload)
+    result["frame_empty"] = guest(imports,c(0))
+    result["guard_pure"] = guest([],b"\x03\x40\x0c\0\x0b"+c(0))
+    result["guard_import"] = guest([("now_ms",0)],b"\x03\x40"+code([],0)+b"\x0c\0\x0b"+c(0))
+    for stage in ("init","event","render","stop"):
+        loop=b"\x03\x40"+code([],1)+b"\x0c\0\x0b"+c(0)
+        bodies={"init":c(0),"event":c(0),"render":clear+c(0),"stop":c(0)}
+        bodies[stage]=loop
+        result["guard_"+stage]=guest([("draw_clear",1),("now_ms",0)],**bodies)
+    input_imports=[("draw_clear",1),("input_events",1)]
+    input_render=c(0)+b"\x2d\0\0"+call(0)+b"\x1a"+c(0)
+    input_event=c(0)+b"\x20\0\x3a\0\0"+c(0)
+    result["input_subscribed"]=guest(input_imports,input_render,init=code([0x38],1)+c(0),event=input_event)
+    result["input_disabled"]=guest(input_imports,input_render,init=code([0x38],1)+code([0],1)+c(0),event=input_event)
+    for mask in (1,8,16,32,55,64,-1):
+        result["input_bad_"+str(mask)]=guest(input_imports,clear+c(0),init=code([mask],1)+c(0))
+    for stage in ("event","render","stop"):
+        bodies={"event":c(0),"render":clear+c(0),"stop":c(0)}
+        bodies[stage]=code([0x38],1)+c(0)
+        result["input_"+stage]=guest(input_imports,init=code([0x38],1)+c(0),**bodies)
     for name,body in (("pixel",draw),("skip",skip)):
         for stage in ("init","event","stop"):
             result[name+"_"+stage]=guest(imports,clear+c(0),payload=payload,**{stage:body+c(0)})

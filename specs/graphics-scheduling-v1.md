@@ -18,15 +18,21 @@ all drawing shares the existing 128-command limit.
 
 Command kind 7 stores x/y/w/h. `tinyrt_frame_t` owns `pixel_bytes` and
 `pixels[122880]`; no guest pointer crosses the runtime boundary. Guest changes
-after the import cannot alter the host copy. Rendering resets commands, count
-and pixel_bytes, but does not clear the pixel payload on each callback.
+after the import cannot alter the host copy. Rendering resets count and, when
+the first command is emitted, pixel_bytes. Each emitted command is initialized;
+unused command slots and the pixel payload tail are left untouched.
 `pixel_bytes` is authoritative for a drawn frame; bytes after it are unused.
 
 The C frame is 137,224 bytes, including 128 command records. Runtime and manager
-own their frames on the heap. Embedding products must place display/queue/frame
-copies on suitable memory and avoid automatic task-stack frame variables. A
-normal successful render performs bounded deep copies; failed render leaves
-the output unchanged and poisons the instance as before.
+write directly into caller-owned, exclusively writable, unpublished storage;
+neither owns an intermediate frame or retains the output pointer after the call.
+Embedding products must place their display/queue buffers in suitable memory
+and avoid automatic task-stack frame variables. Publish only after the complete
+call succeeds with count greater than zero, including manager persistence.
+On any failure with a non-NULL output, count becomes zero and other output
+contents are unspecified; partial rendering is not rolled back. The previously
+displayed frame must remain in separate owned storage. Guest failure still
+poisons the instance. These host C storage rules do not change Guest ABI 1.
 
 ## Skip without copying pixels
 
@@ -61,7 +67,7 @@ owner-thread load all affect device performance.
 bytes. `tinyrt_runtime_memory_peak()` tracks its high-water since the latest
 fresh runtime-system initialization, retains it through shutdown, and resets
 at the next initialization. The manager's read-only wrappers return zero for
-NULL. These values exclude manager/store allocations, allocator headers and
+NULL. These values exclude caller-owned frames, manager/store allocations, allocator headers and
 system thread/lock overhead; the limit stays 2 MiB.
 
 Real WAMR tests check known RGB565 bytes, guest mutation after copy, the entire

@@ -87,5 +87,16 @@ def fixtures(folder):
     for name,data in cases.items(): (folder/(name+".pkg")).write_bytes(data)
     (folder/"reject.txt").write_text("\n".join(cases)+"\n",encoding="ascii")
     print(f"Generated valid fixture + {len(cases)} rejection fixtures")
+    # v2 fixture is assembled independently of the SDK packer.
+    v2 = bytearray(h)
+    v2[:8] = b"TRPKG002"
+    struct.pack_into("<HH5I", v2, 8, 2, 256, 272+len(WASM), 256, 1, 16, 0)
+    payload = struct.pack("<4I", 1, 0, 272, len(WASM)) + WASM
+    v2[152:184] = hashlib.sha256(payload).digest()
+    r, s = utils.decode_dss_signature(KEY.sign(b"TinyRT-package-v2\0" + bytes(v2[:192]), ec.ECDSA(hashes.SHA256())))
+    v2[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
+    (folder/"v2_wasm.pkg").write_bytes(bytes(v2)+payload)
+    import make_v2_fixtures
+    make_v2_fixtures.fixtures(folder,h)
 if __name__=="__main__":
     fixtures(Path(sys.argv[1]))

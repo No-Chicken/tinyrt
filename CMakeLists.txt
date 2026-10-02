@@ -10,7 +10,7 @@ if(NOT WIN32)
 endif()
 add_test(NAME contracts COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/contracts/test_contracts.py")
 add_test(NAME frozen_guests COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/verify_guests.py")
-foreach(suite store package runtime manager integration transport)
+foreach(suite store package runtime manager integration transport esp_guard)
   add_subdirectory("tests/${suite}")
 endforeach()
 

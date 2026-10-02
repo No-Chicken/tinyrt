@@ -1,0 +1,157 @@
+diff --git a/core/iwasm/aot/aot_loader.c b/core/iwasm/aot/aot_loader.c
+index bac0b3c618947de55be8d3b386ba0a6df43a11ee..58f80a857698a120781c56a2df1e6b3e42c8cf73 100644
+--- a/core/iwasm/aot/aot_loader.c
++++ b/core/iwasm/aot/aot_loader.c
+@@ -296,6 +296,28 @@ loader_malloc(uint64 size, char *error_buf, uint32 error_buf_size)
+     return mem;
+ }
+ 
++static bool (*mapping_reserve)(void *, uint32);
++static void (*mapping_release)(void *, uint32);
++static void *mapping_context;
++
++void
++wasm_runtime_set_aot_mapping_budget(bool (*reserve)(void *, uint32),
++                                    void (*release)(void *, uint32), void *ctx)
++{
++    bh_assert((reserve == NULL) == (release == NULL));
++    mapping_reserve = reserve;
++    mapping_release = release;
++    mapping_context = ctx;
++}
++
++static void
++loader_munmap(void *address, uint32 size)
++{
++    os_munmap(address, size);
++    if (mapping_release)
++        mapping_release(mapping_context, size);
++}
++
+ static void *
+ loader_mmap(uint32 size, bool prot_exec, char *error_buf, uint32 error_buf_size)
+ {
+@@ -304,6 +326,11 @@ loader_mmap(uint32 size, bool prot_exec, char *error_buf, uint32 error_buf_size)
+     int map_flags;
+     void *mem;
+ 
++    if (mapping_reserve && !mapping_reserve(mapping_context, size)) {
++        set_error_buf(error_buf, error_buf_size, "AOT mapping budget exceeded");
++        return NULL;
++    }
++
+ #if defined(BUILD_TARGET_X86_64) || defined(BUILD_TARGET_AMD_64) \
+     || defined(BUILD_TARGET_RISCV64_LP64D)                       \
+     || defined(BUILD_TARGET_RISCV64_LP64)
+@@ -331,6 +358,8 @@ loader_mmap(uint32 size, bool prot_exec, char *error_buf, uint32 error_buf_size)
+     map_flags = MMAP_MAP_NONE;
+     if (!(mem = os_mmap(NULL, size, map_prot, map_flags,
+                         os_get_invalid_handle()))) {
++        if (mapping_release)
++            mapping_release(mapping_context, size);
+         set_error_buf(error_buf, error_buf_size, "allocate memory failed");
+         return NULL;
+     }
+@@ -2674,7 +2703,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
+ #ifdef BH_PLATFORM_WINDOWS
+     if (!os_mem_commit(sections, code_size,
+                        MMAP_PROT_READ | MMAP_PROT_WRITE | MMAP_PROT_EXEC)) {
+-        os_munmap(sections, (uint32)total_size);
++        loader_munmap(sections, (uint32)total_size);
+         return false;
+     }
+ #endif
+@@ -2683,7 +2712,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
+     if (os_mprotect(sections, code_size,
+                     MMAP_PROT_READ | MMAP_PROT_WRITE | MMAP_PROT_EXEC)
+         != 0) {
+-        os_munmap(sections, (uint32)total_size);
++        loader_munmap(sections, (uint32)total_size);
+         return false;
+     }
+ 
+@@ -2694,7 +2723,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
+     *buf = sections;
+     *buf_end = sections + code_size;
+     bh_memcpy_s(sections, (uint32)code_size, old_buf, (uint32)code_size);
+-    os_munmap(old_buf, code_size);
++    loader_munmap(old_buf, code_size);
+     sections += align_uint((uint32)code_size, page_size);
+ 
+     /* then migrate .data sections */
+@@ -2708,7 +2737,7 @@ try_merge_data_and_text(const uint8 **buf, const uint8 **buf_end,
+     }
+     /* free the original data sections */
+     if (module->merged_data_sections) {
+-        os_munmap(module->merged_data_sections,
++        loader_munmap(module->merged_data_sections,
+                   module->merged_data_sections_size);
+         module->merged_data_sections = NULL;
+         module->merged_data_sections_size = 0;
+@@ -4269,7 +4298,7 @@ destroy_sections(AOTSection *section_list, bool destroy_aot_text)
+         next = section->next;
+         if (destroy_aot_text && section->section_type == AOT_SECTION_TYPE_TEXT
+             && section->section_body)
+-            os_munmap((uint8 *)section->section_body,
++            loader_munmap((uint8 *)section->section_body,
+                       section->section_body_size);
+         wasm_runtime_free(section);
+         section = next;
+@@ -4635,12 +4664,12 @@ aot_unload(AOTModule *module)
+         uint8 *mmap_addr = module->literal - sizeof(uint32);
+         uint32 total_size =
+             sizeof(uint32) + module->literal_size + module->code_size;
+-        os_munmap(mmap_addr, total_size);
++        loader_munmap(mmap_addr, total_size);
+     }
+ 
+ #if defined(BH_PLATFORM_WINDOWS)
+     if (module->extra_plt_data) {
+-        os_munmap(module->extra_plt_data, module->extra_plt_data_size);
++        loader_munmap(module->extra_plt_data, module->extra_plt_data_size);
+     }
+ #endif
+ 
+@@ -4650,7 +4679,7 @@ aot_unload(AOTModule *module)
+         GOTItem *got_item = module->got_item_list, *got_item_next;
+ 
+         if (module->got_func_ptrs) {
+-            os_munmap(module->got_func_ptrs,
++            loader_munmap(module->got_func_ptrs,
+                       sizeof(void *) * module->got_item_count);
+         }
+         while (got_item) {
+@@ -4666,11 +4695,11 @@ aot_unload(AOTModule *module)
+                                      module->data_section_count);
+ 
+     if (module->merged_data_sections)
+-        os_munmap(module->merged_data_sections,
++        loader_munmap(module->merged_data_sections,
+                   module->merged_data_sections_size);
+ 
+     if (module->merged_data_text_sections)
+-        os_munmap(module->merged_data_text_sections,
++        loader_munmap(module->merged_data_text_sections,
+                   module->merged_data_text_sections_size);
+ 
+ #if WASM_ENABLE_DEBUG_AOT != 0
+diff --git a/core/iwasm/include/wasm_export.h b/core/iwasm/include/wasm_export.h
+index 6f061610f153f97cfacf7461f75ff16414c18b1a..cb817a6605b57c4193a0f07c1cf2454eb3478556 100644
+--- a/core/iwasm/include/wasm_export.h
++++ b/core/iwasm/include/wasm_export.h
+@@ -158,6 +158,15 @@ struct WASMSharedHeap;
+ typedef struct WASMSharedHeap *wasm_shared_heap_t;
+ 
+ /* Package Type */
++/* Optional AOT mapping accounting. Configure only while no AOT module or load
++ * is alive, from the serialized runtime owner. Reserve runs before allocation;
++ * release balances every successful reservation, including allocation failure.
++ * Both callbacks must be NULL or both non-NULL; context must outlive all loads.
++ * Mapping sizes exclude platform rounding; host accounting must include it. */
++WASM_RUNTIME_API_EXTERN void
++wasm_runtime_set_aot_mapping_budget(bool (*reserve)(void *, uint32_t),
++                                    void (*release)(void *, uint32_t), void *ctx);
++
+ typedef enum {
+     Wasm_Module_Bytecode = 0,
+     Wasm_Module_AoT,

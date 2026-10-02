@@ -1,0 +1,26 @@
+{
+  "schema": 1,
+  "wamr": {
+    "url": "https://github.com/bytecodealliance/wasm-micro-runtime.git",
+    "commit": "25bd7eb63e828e4bd242cc9b38d260b4b31c6605"
+  },
+  "llvm": {
+    "url": "https://github.com/espressif/llvm-project.git",
+    "commit": "344b928e67bfc1d07cb150609c55548e86a9bf19",
+    "upstream_branch": "xtensa_release_18.1.2",
+    "version": "18.1.2"
+  },
+  "patches": ["loop-poll.patch", "../../patches/wamr/0001-exec-env-cancellation.patch", "../../patches/wamr/0002-aot-dbus-writes.patch", "../../patches/wamr/0003-aot-mapping-budget.patch", "../../patches/wamr/0004-esp-idf-native-stack.patch"],
+  "aot_format_version": 5,
+  "target_options": [
+    "--target=xtensa",
+    "--cpu=esp32s3",
+    "--bounds-checks=1",
+    "--stack-bounds-checks=1",
+    "--opt-level=3",
+    "--size-level=0",
+    "--disable-simd",
+    "--disable-ref-types",
+    "--enable-loop-poll"
+  ]
+}

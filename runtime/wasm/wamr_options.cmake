@@ -1,7 +1,12 @@
 # PC 与设备共用执行配置，避免拿不同安全配置的结果相互替代。
 set(WAMR_BUILD_INTERP 1)
 set(WAMR_BUILD_FAST_INTERP 0)
-set(WAMR_BUILD_AOT 0)
+option(TINYRT_ENABLE_AOT "Enable authenticated AOT execution with mandatory host guard" OFF)
+if(TINYRT_ENABLE_AOT)
+    set(WAMR_BUILD_AOT 1)
+else()
+    set(WAMR_BUILD_AOT 0)
+endif()
 set(WAMR_BUILD_JIT 0)
 set(WAMR_BUILD_FAST_JIT 0)
 set(WAMR_BUILD_LIBC_BUILTIN 0)
@@ -11,6 +16,7 @@ set(WAMR_BUILD_LIB_WASI_THREADS 0)
 set(WAMR_BUILD_LIB_PTHREAD_SEMAPHORE 0)
 set(WAMR_BUILD_LIB_PTHREAD 0)
 set(WAMR_BUILD_THREAD_MGR 0)
+set(WAMR_BUILD_LOOP_POLL 1)
 set(WAMR_BUILD_SHARED_MEMORY 0)
 set(WAMR_BUILD_MULTI_MODULE 0)
 set(WAMR_BUILD_MINI_LOADER 0)
@@ -47,3 +53,20 @@ execute_process(COMMAND git -C "${WAMR_ROOT_DIR}" status --porcelain --untracked
 if(NOT status_result EQUAL 0 OR NOT source_changes STREQUAL "")
     message(FATAL_ERROR "WAMR checkout must be clean: ${WAMR_ROOT_DIR}")
 endif()
+
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+get_filename_component(_tinyrt_root "${CMAKE_CURRENT_LIST_DIR}/../.." ABSOLUTE)
+set(_tinyrt_runtime_patch "${_tinyrt_root}/patches/wamr/0001-exec-env-cancellation.patch")
+set(_tinyrt_aot_loader_patch "${_tinyrt_root}/patches/wamr/0002-aot-dbus-writes.patch")
+set(_tinyrt_aot_budget_patch "${_tinyrt_root}/patches/wamr/0003-aot-mapping-budget.patch")
+set(_tinyrt_native_stack_patch "${_tinyrt_root}/patches/wamr/0004-esp-idf-native-stack.patch")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_tinyrt_runtime_patch}" "${_tinyrt_aot_loader_patch}" "${_tinyrt_aot_budget_patch}" "${_tinyrt_native_stack_patch}")
+execute_process(COMMAND "${Python3_EXECUTABLE}" "${_tinyrt_root}/scripts/patch_wamr.py"
+    --source "${WAMR_ROOT_DIR}" --output "${CMAKE_BINARY_DIR}/tinyrt-wamr"
+    --revision "${PROBE_WAMR_COMMIT}" --patch "${_tinyrt_runtime_patch}" --patch "${_tinyrt_aot_loader_patch}" --patch "${_tinyrt_aot_budget_patch}" --patch "${_tinyrt_native_stack_patch}"
+    OUTPUT_VARIABLE _tinyrt_patched_wamr OUTPUT_STRIP_TRAILING_WHITESPACE
+    RESULT_VARIABLE _tinyrt_patch_result)
+if(NOT _tinyrt_patch_result EQUAL 0)
+    message(FATAL_ERROR "WAMR runtime patch verification failed")
+endif()
+set(WAMR_ROOT_DIR "${_tinyrt_patched_wamr}")

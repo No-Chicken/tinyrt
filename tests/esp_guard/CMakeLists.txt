@@ -1,0 +1,7 @@
+add_executable(test_esp_guard test_esp_guard.c ../../ports/esp-idf/tinyrt_esp_execution_guard.c)
+target_include_directories(test_esp_guard PRIVATE . ../../ports/esp-idf ../../runtime/include)
+if(MSVC)
+ target_compile_options(test_esp_guard PRIVATE /utf-8 /W4 /WX)
+endif()
+add_test(NAME esp_execution_guard COMMAND test_esp_guard)
+set_tests_properties(esp_execution_guard PROPERTIES TIMEOUT 5)

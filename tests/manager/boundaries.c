@@ -10,6 +10,8 @@ int runtime_stop_write;
 int runtime_skip_write;
 int runtime_skip_frame;
 int metadata_swap;
+int metadata_aot;
+unsigned runtime_aot_creates;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
 tinyrt_status_t tinyrt_package_verify(void *c,const tinyrt_store_io_t *io,uint32_t o,uint32_t n,tinyrt_app_info_t *a) {
@@ -19,12 +21,22 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,const 
  if(runtime_live)return TINYRT_BUSY;
  (void)v;memset(m,0,sizeof(*m));tinyrt_status_t r=test_package_verify(NULL,io,o,n,&m->app);
  m->wasm_offset=0;m->wasm_size=n;m->policy=(tinyrt_package_policy_t){1,15,1,1000};
+ m->execution_kind=metadata_aot?TINYRT_PACKAGE_EXEC_AOT:TINYRT_PACKAGE_EXEC_WASM;
+ m->aot_offset=44;m->aot_size=n-44;
  memcpy(m->title,"Counter",8);if(metadata_swap) memcpy(m->app.id.app_id,"foreign",8);return r;
 }
 tinyrt_status_t tinyrt_runtime_create(const void *b,uint32_t n,const tinyrt_package_policy_t *p,const tinyrt_runtime_host_t *h,tinyrt_runtime_t **out) {
  (void)b;(void)n;(void)p;*out=calloc(1,sizeof(**out));if(!*out) return TINYRT_NO_MEMORY;(*out)->host=*h;runtime_live=1;return TINYRT_OK;
 }
+tinyrt_status_t tinyrt_runtime_create_aot(const void *b,uint32_t n,const tinyrt_package_policy_t *p,const tinyrt_runtime_host_t *h,
+ const tinyrt_runtime_aot_config_t *config,const tinyrt_package_aot_metadata_t *meta,tinyrt_runtime_t **out) {
+ (void)meta;*out=NULL;
+ if(!config || !config->profile || !config->profile->enabled || !config->guard || !config->guard->arm)return TINYRT_INVALID_ARGUMENT;
+ if(n!=356 || ((const unsigned char *)b)[0]!=13)return TINYRT_VERIFY_FAILED;
+ ++runtime_aot_creates;return tinyrt_runtime_create(b,n,p,h,out);
+}
 tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r,int32_t w,int32_t h) {(void)r;(void)w;(void)h;return TINYRT_OK;}
+tinyrt_status_t tinyrt_runtime_set_execution_guard(tinyrt_runtime_t *r,const tinyrt_execution_guard_t *guard) {(void)r;(void)guard;return TINYRT_OK;}
 tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r) {
  if(runtime_stop_write)return r->host.kv_set(r->host.ctx,0,77);
  return TINYRT_OK;
@@ -38,10 +50,11 @@ tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,
 }
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r,tinyrt_frame_t *out) {
  if(runtime_skip_frame){out->count=0;return TINYRT_OK;}
- memset(out,0,sizeof(*out));out->count=1;out->commands[0].kind=TINYRT_DRAW_CLEAR;
+ out->count=1;out->pixel_bytes=0;memset(&out->commands[0],0,sizeof(out->commands[0]));out->commands[0].kind=TINYRT_DRAW_CLEAR;
  out->commands[0].rgb=(uint32_t)r->host.kv_get(r->host.ctx,0,0);return TINYRT_OK;
 }
 uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r) {return r?17:100;}
+uint32_t tinyrt_runtime_input_events(const tinyrt_runtime_t *r) {(void)r;return 0;}
 size_t tinyrt_runtime_memory_used(void) {return runtime_live?256:0;}
 size_t tinyrt_runtime_memory_peak(void) {return 256;}
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r) {(void)r;return "test guest failure";}

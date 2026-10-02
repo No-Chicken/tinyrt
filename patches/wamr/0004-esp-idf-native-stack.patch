@@ -1,0 +1,23 @@
+diff --git a/core/shared/platform/esp-idf/espidf_platform.c b/core/shared/platform/esp-idf/espidf_platform.c
+index 045c3a5f6dc53e5df9ebd3d0b8c303222649961d..9c2c1b2c2e8d3bba24094868e6af8b0262d4add8 100644
+--- a/core/shared/platform/esp-idf/espidf_platform.c
++++ b/core/shared/platform/esp-idf/espidf_platform.c
+@@ -75,12 +75,12 @@ os_time_thread_cputime_us(void)
+ uint8 *
+ os_thread_get_stack_boundary(void)
+ {
+-#if defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+-    TaskStatus_t pxTaskStatus;
+-    vTaskGetInfo(xTaskGetCurrentTaskHandle(), &pxTaskStatus, pdTRUE, eInvalid);
+-    return pxTaskStatus.pxStackBase;
+-#else // !defined(CONFIG_FREERTOS_USE_TRACE_FACILITY)
+-    return NULL;
++    /* This public IDF API returns the task's low stack address without trace.
++       A NULL boundary would silently disable software native stack checks. */
++#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(6, 0, 0)
++    return (uint8 *)xTaskGetStackStart(NULL);
++#else
++    return pxTaskGetStackStart(NULL);
+ #endif
+ }
+ 

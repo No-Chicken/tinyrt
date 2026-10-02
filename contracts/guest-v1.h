@@ -15,11 +15,18 @@ TINYRT_IMPORT(draw_round_rect) int32_t draw_round_rect(int32_t x,int32_t y,int32
 TINYRT_IMPORT(draw_skip) int32_t draw_skip(void);
 TINYRT_IMPORT(draw_text) int32_t draw_text(int32_t x,int32_t y,const char *text,uint32_t length,uint32_t rgb);
 TINYRT_IMPORT(draw_text_box) int32_t draw_text_box(int32_t x,int32_t y,int32_t w,int32_t h,const char *text,uint32_t length,uint32_t rgb,int32_t font_px,int32_t align);
+/* Optional: init only, INPUT permission. 0=legacy release; 0x38=full lifecycle.
+ * Queue overflow or pointer loss produces CANCEL; release does not imply click. */
+TINYRT_IMPORT(input_events) int32_t input_events(uint32_t mask);
 TINYRT_IMPORT(kv_get) int32_t kv_get(uint32_t key,int32_t fallback);
 TINYRT_IMPORT(kv_set) int32_t kv_set(uint32_t key,int32_t value);
 TINYRT_IMPORT(now_ms) uint32_t now_ms(void);
 #define TINYRT_TOUCH_RELEASE 1
 #define TINYRT_CLOCK_EVENT 2
+#define TINYRT_TOUCH_PRESS 3
+#define TINYRT_TOUCH_MOVE 4
+#define TINYRT_TOUCH_CANCEL 5
+#define TINYRT_INPUT_LIFECYCLE_MASK 0x38u
 /* Export these exact signatures. Return 0 on success. Each host call is bounded;
  * only render may draw, and every drawn frame starts with draw_clear. Text is UTF-8,
  * 1..63 bytes. Storage keys 0..15 contain signed 32-bit values; host scopes to app.

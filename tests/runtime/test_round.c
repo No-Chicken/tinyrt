@@ -13,7 +13,7 @@ static int32_t get(void *ctx,uint32_t key,int32_t fallback) {(void)ctx;(void)key
 static tinyrt_status_t set(void *ctx,uint32_t key,int32_t value) {(void)ctx;(void)key;saved=value;++writes;return TINYRT_OK;}
 static uint32_t now(void *ctx) {(void)ctx;return 123;}
 static tinyrt_runtime_host_t host={NULL,get,set,now};
-static tinyrt_frame_t frame,previous;
+static tinyrt_frame_t frame;
 static void fixture(const char *name) {
     char path[1024]; snprintf(path,sizeof(path),"%s/%s.wasm",FIXTURE_DIR,name);
     FILE *f=fopen(path,"rb"); if (!f) exit(2);
@@ -53,8 +53,8 @@ static void graphics(void) {
         "text_negative","text_zero_width","text_overflow","text_ptr","text_ptr_wrap","text_empty","text_long","text_font","text_align_negative","text_align",
         "text_badutf8","text_control","text_surrogate","round_cap129","rr_noclear","arc_noclear","textbox_noclear"};
     for(unsigned i=0;i<sizeof(bad)/sizeof(*bad);++i){rt=create(bad[i]);if(!rt)continue;
-        CHECK(tinyrt_runtime_init(rt,466,466)==TINYRT_OK);memset(&frame,0xa5,sizeof(frame));previous=frame;
-        CHECK(tinyrt_runtime_render(rt,&frame)==TINYRT_VERIFY_FAILED);CHECK(!memcmp(&frame,&previous,sizeof(frame)));
+        CHECK(tinyrt_runtime_init(rt,466,466)==TINYRT_OK);memset(&frame,0xa5,sizeof(frame));
+        CHECK(tinyrt_runtime_render(rt,&frame)==TINYRT_VERIFY_FAILED);CHECK(frame.count==0);
         CHECK(tinyrt_runtime_last_error(rt)[0]);CHECK(tinyrt_runtime_stop(rt)==TINYRT_VERIFY_FAILED);tinyrt_runtime_destroy(rt);}
     const char *outside[]={"rr_init","arc_init","textbox_init","rr_event","arc_event","textbox_event"};
     for(unsigned i=0;i<6;++i){rt=create(outside[i]);if(!rt)continue;

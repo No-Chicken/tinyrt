@@ -16,9 +16,11 @@
 #define TINYRT_OP_LIST_PAGE 0x18u
 #define TINYRT_OP_STORAGE 0x19u
 #define TINYRT_OP_APP_INFO 0x1Au
+#define TINYRT_OP_RUNTIME_INFO 0x1Bu
 #define TINYRT_CAP_QUARANTINE 8u
 #define TINYRT_CAP_PAGED_LIST 16u
 #define TINYRT_CAP_STORAGE 32u
+#define TINYRT_CAP_PACKAGE_V2 64u
 typedef struct {
     uint8_t payload[TINYRT_MGMT_MAX_MESSAGE];
     uint16_t request_id, total, received;

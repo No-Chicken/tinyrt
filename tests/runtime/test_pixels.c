@@ -46,7 +46,7 @@ static void pixels(void) {
   r=create(name);if(!r)continue;CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
   memset(&frame,0xa5,sizeof(frame));previous=frame;
   CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_VERIFY_FAILED);
-  CHECK(!memcmp(&frame,&previous,sizeof(frame))&&tinyrt_runtime_last_error(r)[0]);
+  CHECK(frame.count==0&&tinyrt_runtime_last_error(r)[0]);
   CHECK(tinyrt_runtime_stop(r)==TINYRT_VERIFY_FAILED);close_guest(r,baseline);}
 }
 static void skipping(void) {
@@ -65,7 +65,7 @@ static void skipping(void) {
  const char*bad[]={"skip_clear","clear_skip","skip_pixel","skip_twice"};
  for(unsigned i=0;i<4;++i){tinyrt_runtime_t*r=create(bad[i]);if(!r)continue;
   CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);memset(&frame,0xa5,sizeof(frame));previous=frame;
-  CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_VERIFY_FAILED&&!memcmp(&frame,&previous,sizeof(frame)));
+  CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_VERIFY_FAILED&&frame.count==0);
   close_guest(r,baseline);}
 }
 static void stages_and_permissions(void) {

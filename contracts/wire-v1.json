@@ -8,7 +8,11 @@
       "TINYRT_PERMISSION_INPUT": 2,
       "TINYRT_PERMISSION_STORAGE": 4,
       "TINYRT_PERMISSION_CLOCK": 8,
-      "TINYRT_PERMISSION_ALL": 15
+      "TINYRT_PERMISSION_ALL": 15,
+      "TINYRT_AOT_LOOP_POLL": 1,
+      "TINYRT_AOT_BOUNDS_CHECKS": 2,
+      "TINYRT_AOT_STACK_CHECKS": 4,
+      "TINYRT_AOT_REQUIRED_FLAGS": 7
     },
     "runtime/include/tinyrt_store.h": {
       "TINYRT_STORE_SIZE": 5111808,
@@ -34,7 +38,9 @@
       "TINYRT_CAP_PAGED_LIST": 16,
       "TINYRT_OP_STORAGE": 25,
       "TINYRT_CAP_STORAGE": 32,
-      "TINYRT_OP_APP_INFO": 26
+      "TINYRT_OP_APP_INFO": 26,
+      "TINYRT_OP_RUNTIME_INFO": 27,
+      "TINYRT_CAP_PACKAGE_V2": 64
     }
   },
   "package": {
@@ -296,6 +302,160 @@
         }
       },
       "semantics": "Only fully verified healthy metadata matching the requested identity. Title is canonical NUL-terminated UTF-8 with zero padding. Quarantined identities use the quarantine list; unverified headers are never metadata."
+    },
+    "app_info_v2": {
+      "hello_capability_bit": 64,
+      "opcode": 26,
+      "request_size": 70,
+      "request": {
+        "schema": {
+          "offset": 0,
+          "type": "u16le",
+          "value": 2
+        },
+        "identity": {
+          "offset": 2,
+          "type": "identity68"
+        }
+      },
+      "response_size": 248,
+      "response": {
+        "schema": {
+          "offset": 0,
+          "type": "u16le"
+        },
+        "package_format": {
+          "offset": 2,
+          "type": "u16le"
+        },
+        "selected_backend": {
+          "offset": 4,
+          "type": "u8"
+        },
+        "fallback_reason": {
+          "offset": 5,
+          "type": "u8"
+        },
+        "section_bits": {
+          "offset": 6,
+          "type": "u16le"
+        },
+        "app": {
+          "offset": 8,
+          "type": "info72"
+        },
+        "title": {
+          "offset": 80,
+          "type": "utf8[64]"
+        },
+        "key_id": {
+          "offset": 144,
+          "type": "u32le"
+        },
+        "abi_version": {
+          "offset": 148,
+          "type": "u32le"
+        },
+        "permissions": {
+          "offset": 152,
+          "type": "u32le"
+        },
+        "memory_pages": {
+          "offset": 156,
+          "type": "u32le"
+        },
+        "instruction_budget": {
+          "offset": 160,
+          "type": "u32le"
+        },
+        "wasm_size": {
+          "offset": 164,
+          "type": "u32le"
+        },
+        "assets_size": {
+          "offset": 168,
+          "type": "u32le"
+        },
+        "aot_size": {
+          "offset": 172,
+          "type": "u32le"
+        },
+        "aot_format": {
+          "offset": 176,
+          "type": "u32le"
+        },
+        "safety_flags": {
+          "offset": 180,
+          "type": "u32le"
+        },
+        "target_arch": {
+          "offset": 184,
+          "type": "ascii[16]"
+        },
+        "target_cpu": {
+          "offset": 200,
+          "type": "ascii[16]"
+        },
+        "compat_id": {
+          "offset": 216,
+          "type": "bytes[32]"
+        }
+      },
+      "legacy_v2_request_status": 2,
+      "semantics": "Legacy request68 remains v1-only. Schema2 accepts either format. Signature authorization is device-owned; metadata safety flags are authenticated claims."
+    },
+    "runtime_info": {
+      "hello_capability_bit": 64,
+      "opcode": 27,
+      "request_size": 0,
+      "response_size": 136,
+      "response": {
+        "schema": {
+          "offset": 0,
+          "type": "u16le"
+        },
+        "package_formats": {
+          "offset": 2,
+          "type": "u16le"
+        },
+        "backends": {
+          "offset": 4,
+          "type": "u32le"
+        },
+        "aot_format": {
+          "offset": 8,
+          "type": "u32le"
+        },
+        "runtime_abi_revision": {
+          "offset": 12,
+          "type": "u32le"
+        },
+        "target_arch": {
+          "offset": 16,
+          "type": "ascii[16]"
+        },
+        "target_cpu": {
+          "offset": 32,
+          "type": "ascii[16]"
+        },
+        "compat_id": {
+          "offset": 48,
+          "type": "bytes[32]"
+        },
+        "options_sha256": {
+          "offset": 80,
+          "type": "bytes[32]"
+        },
+        "wamr_commit": {
+          "offset": 112,
+          "type": "bytes[20]"
+        },
+        "required_safety_flags": {
+          "offset": 132,
+          "type": "u32le"
+        }
+      },
+      "semantics": "Profile fields are zero when AOT is disabled. Maximum logical payload remains 256 bytes including status u16."
     }
   },
   "store": {
@@ -307,5 +467,45 @@
     "allocation_alignment": 4096,
     "allocation": "first fit contiguous extents; current committed healthy and quarantined extents excluded; updates use separate staging; no compaction",
     "legacy": "TRDIR001 is rejected without formatting"
+  },
+  "package_v2": {
+    "magic": "TRPKG002",
+    "format_version": 2,
+    "header_size": 256,
+    "signature_domain_hex": "54696e7952542d7061636b6167652d763200",
+    "max_package_size": 2097152,
+    "table_offset": 256,
+    "entry_size": 16,
+    "max_sections": 3,
+    "section_alignment": 4,
+    "padding": "minimal zero bytes between sections; no trailing padding",
+    "section_kinds": {
+      "wasm": 1,
+      "aot": 2,
+      "resources": 3
+    },
+    "entry_fields": [
+      "kind:u32le",
+      "flags:u32le=0",
+      "offset:u32le",
+      "size:u32le"
+    ],
+    "aot_metadata_size": 256,
+    "aot_offsets": {
+      "metadata_version": 0,
+      "metadata_size": 2,
+      "format_version": 4,
+      "safety_flags": 8,
+      "target_arch": 16,
+      "target_cpu": 32,
+      "wamr_commit": 48,
+      "llvm_commit": 68,
+      "patch_sha256": 88,
+      "compat_id": 120,
+      "options_sha256": 152,
+      "compiler_sha256": 184,
+      "source_wasm_sha256": 216
+    },
+    "required_safety_flags": 7
   }
 }

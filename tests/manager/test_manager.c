@@ -19,20 +19,39 @@ extern int runtime_stop_write;
 extern int runtime_skip_write;
 extern int runtime_skip_frame;
 extern int metadata_swap;
+extern int metadata_aot;
+extern unsigned runtime_aot_creates;
 static tinyrt_status_t load(void*c,const char*id,uint32_t*m,int32_t v[16]) {(void)c;(void)id;*m=kv_mask;memcpy(v,kv_values,sizeof(kv_values));return TINYRT_OK;}
 static tinyrt_status_t save(void*c,const char*id,uint32_t m,const int32_t v[16]) {(void)c;(void)id;if(fail_save)return TINYRT_IO_ERROR;kv_mask=m;memcpy(kv_values,v,sizeof(kv_values));saves++;return TINYRT_OK;}
 static tinyrt_status_t clear(void*c,const char*id) {(void)c;(void)id;if(fail_clear)return TINYRT_IO_ERROR;kv_mask=0;memset(kv_values,0,sizeof(kv_values));clears++;return TINYRT_OK;}
 static uint32_t now(void*c){(void)c;return clock_ms;}
 static tinyrt_manager_t *open_manager(void) {
  tinyrt_store_io_t io=fake_nor_io(&nor);static tinyrt_package_verifier_t verifier={0};
+ static tinyrt_package_aot_profile_t profile={true,false,5,"x86_64","",{1}};verifier.aot_profile=&profile;
  tinyrt_manager_storage_t storage={NULL,load,save,clear,now};tinyrt_manager_t*m=NULL;
  CHECK(tinyrt_manager_open(&io,&verifier,&storage,&m)==TINYRT_OK&&m);return m;
 }
+static tinyrt_status_t guard_arm(void *ctx,void (*cancel)(void *),void *arg,uint32_t ms) {(void)ctx;(void)cancel;(void)arg;(void)ms;return TINYRT_OK;}
+static void guard_disarm(void *ctx) {(void)ctx;}
 static tinyrt_app_info_t install(tinyrt_manager_t*m,uint32_t version) {
  tinyrt_app_info_t a;test_package_make(package,sizeof(package),"counter",version,13,&a);
  CHECK(tinyrt_manager_begin(m,&a)==TINYRT_OK);
  CHECK(tinyrt_manager_write(m,package,sizeof(package))==TINYRT_OK);
  CHECK(tinyrt_manager_finish(m)==TINYRT_OK);return a;
+}
+static void test_aot_selection(void) {
+ fake_nor_init(&nor);metadata_aot=1;tinyrt_manager_t*m=open_manager();
+ tinyrt_execution_guard_t guard={NULL,guard_arm,guard_disarm,75};
+ CHECK(tinyrt_manager_set_execution_guard(m,&guard)==TINYRT_OK);
+ tinyrt_app_info_t a=install(m,1);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK && runtime_aot_creates==1);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+ CHECK(tinyrt_manager_set_execution_guard(m,NULL)==TINYRT_OK);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_INVALID_ARGUMENT && frame.count==0);
+ CHECK(runtime_aot_creates==1);
+ tinyrt_manager_close(m);metadata_aot=0;m=open_manager();
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK && runtime_aot_creates==1);
+ tinyrt_manager_close(m);saves=clears=runtime_destroy_count=0;kv_mask=0;memset(kv_values,0,sizeof(kv_values));
 }
 static void test_coalescing(void) {
  fake_nor_init(&nor);kv_mask=0;memset(kv_values,0,sizeof(kv_values));saves=0;clock_ms=UINT32_MAX-2000u;
@@ -143,7 +162,30 @@ static void test_skipped_frame_and_clock(void) {
  tinyrt_manager_close(m);runtime_skip_frame=0;
  saves=0;clears=0;runtime_destroy_count=0;clock_ms=42;
 }
+static void test_output_ownership(void) {
+ fake_nor_init(&nor);tinyrt_manager_t*m=open_manager();tinyrt_app_info_t a=install(m,1);
+ static tinyrt_frame_t front,back,snapshot;
+ memset(&front,0xa5,sizeof(front));
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&front)==TINYRT_OK&&front.count==1);
+ CHECK(((uint8_t*)&front.commands[1])[0]==0xa5&&front.pixels[0]==0xa5);
+ snapshot=front;memset(&back,0x5a,sizeof(back));
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&back)==TINYRT_OK&&back.count==1);
+ CHECK(((uint8_t*)&back.commands[1])[0]==0x5a&&back.pixels[0]==0x5a);
+ CHECK(!memcmp(&front,&snapshot,sizeof(front)));
+ clock_ms+=5000;fail_save=1;
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&back)==TINYRT_IO_ERROR&&back.count==0);
+ CHECK(!memcmp(&front,&snapshot,sizeof(front))&&kv_values[0]==1);
+ fail_save=0;back.count=99;
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&back)==TINYRT_NOT_FOUND&&back.count==0);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&back)==TINYRT_OK&&back.count==1);
+ memset(&back,0xcc,sizeof(back));CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+ CHECK(back.count==0xcccccccc&&back.pixels[0]==0xcc);
+ tinyrt_manager_close(m);
+ CHECK(!memcmp(&front,&snapshot,sizeof(front)));
+ saves=0;clears=0;runtime_destroy_count=0;clock_ms=42;
+}
 int main(void) {
+ test_output_ownership();
  test_skipped_frame_and_clock();
  test_large_catalog();
  test_coalescing();
@@ -169,7 +211,7 @@ int main(void) {
  CHECK(tinyrt_manager_uninstall(m,&a.id)==TINYRT_NOT_FOUND);
  CHECK(tinyrt_manager_start(m,&b.id,466,466,&frame)==TINYRT_OK&&frame.commands[0].rgb==1);
  clock_ms+=5000;fail_save=1;CHECK(tinyrt_manager_event(m,1,1,1,0,&frame)==TINYRT_IO_ERROR);
- CHECK(kv_values[0]==1&&frame.commands[0].rgb==1);fail_save=0;
+ CHECK(kv_values[0]==1&&frame.count==0);fail_save=0;
  CHECK(tinyrt_manager_uninstall(m,&b.id)==TINYRT_OK);
  kv_mask=1;kv_values[0]=777; /* Simulate cleanup not completing after uninstall. */
  fail_clear=1;test_package_make(package,sizeof(package),"counter",3,13,&a);
@@ -183,5 +225,6 @@ int main(void) {
  CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_VERIFY_FAILED&&count==0);metadata_swap=0;
  tinyrt_manager_close(m);m=open_manager();tinyrt_app_info_t out;
  CHECK(tinyrt_manager_query(m,&b.id,&out)==TINYRT_OK);tinyrt_manager_close(m);
+ test_aot_selection();
  printf("MANAGER_TESTS checks=%u PASS (real NOR/store, explicit runtime/crypto boundaries)\n",checks);return 0;
 }

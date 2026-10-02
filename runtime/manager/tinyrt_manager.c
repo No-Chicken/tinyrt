@@ -11,13 +11,13 @@ struct tinyrt_manager {
     tinyrt_install_t *install;
     uint32_t received;
     tinyrt_runtime_t *runtime;
+    tinyrt_execution_guard_t guard;
     tinyrt_app_info_t running;
     uint32_t mask;
     int32_t values[16];
     uint32_t durable_mask, last_save_ms;
     int32_t durable_values[16];
     bool save_attempted;
-    tinyrt_frame_t frame;
     tinyrt_package_metadata_t catalog[TINYRT_STORE_MAX_APPS];
     tinyrt_app_info_t scratch[TINYRT_STORE_MAX_APPS]; /* Single-owner heap workspace. */
     uint32_t catalog_count;
@@ -77,6 +77,15 @@ static void destroy_runtime(tinyrt_manager_t *m) {
     memset(m->values, 0, sizeof(m->values));
     m->durable_mask = 0;
     memset(m->durable_values, 0, sizeof(m->durable_values));
+}
+tinyrt_status_t tinyrt_manager_set_execution_guard(tinyrt_manager_t *m, const tinyrt_execution_guard_t *guard) {
+    if (!m) return TINYRT_INVALID_ARGUMENT;
+    if (m->runtime) return TINYRT_BUSY;
+    if (guard && (!guard->arm || !guard->disarm || !guard->timeout_ms ||
+                  guard->timeout_ms > TINYRT_CALLBACK_TIMEOUT_MAX_MS)) return TINYRT_INVALID_ARGUMENT;
+    if (guard) m->guard = *guard;
+    else memset(&m->guard, 0, sizeof(m->guard));
+    return TINYRT_OK;
 }
 static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
     if (m->mask == m->durable_mask && !memcmp(m->values, m->durable_values, sizeof(m->values)))
@@ -310,18 +319,21 @@ static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     return r;
 }
 static tinyrt_status_t finish_call(tinyrt_manager_t *m, tinyrt_frame_t *out) {
-    tinyrt_status_t r = tinyrt_runtime_render(m->runtime, &m->frame);
+    tinyrt_status_t r = tinyrt_runtime_render(m->runtime, out);
     if (r == TINYRT_OK)
         r = persist(m, false);
-    if (r != TINYRT_OK)
+    if (r != TINYRT_OK) {
+        out->count = 0;
         return fail_runtime(m, r);
-    if(m->frame.count) *out=m->frame;
-    else out->count=0; /* A successful skip retains display without a large copy. */
+    }
     return TINYRT_OK;
 }
 tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_id_t *id, int32_t width,
                                      int32_t height, tinyrt_frame_t *out) {
-    if (!m || !out || width <= 0 || height <= 0)
+    if (!out)
+        return TINYRT_INVALID_ARGUMENT;
+    out->count = 0;
+    if (!m || width <= 0 || height <= 0)
         return TINYRT_INVALID_ARGUMENT;
     if (m->install)
         return TINYRT_BUSY;
@@ -351,16 +363,30 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
         r = tinyrt_store_query(m->store, id, &a);
         return r == TINYRT_OK ? TINYRT_VERIFY_FAILED : r;
     }
-    uint8_t *wasm = malloc(meta.wasm_size);
-    if (!wasm)
+    bool aot=meta.execution_kind==TINYRT_PACKAGE_EXEC_AOT;
+    if(!aot && meta.execution_kind!=TINYRT_PACKAGE_EXEC_WASM)return TINYRT_VERIFY_FAILED;
+    if(aot && (!m->guard.arm || !m->verifier.aot_profile || !m->verifier.aot_profile->enabled))
+        return TINYRT_INVALID_ARGUMENT;
+    uint32_t module_size=aot?meta.aot_size:meta.wasm_size;
+    uint32_t module_offset=aot?meta.aot_offset:meta.wasm_offset;
+    uint8_t *module = malloc(module_size);
+    if (!module)
         return TINYRT_NO_MEMORY;
-    r = tinyrt_store_read(m->store, id, meta.wasm_offset, wasm, meta.wasm_size);
+    r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
     tinyrt_runtime_host_t host = {m, host_get, host_set, host_now};
-    if (r == TINYRT_OK)
-        r = tinyrt_runtime_create(wasm, meta.wasm_size, &meta.policy, &host, &m->runtime);
-    free(wasm);
+    if (r == TINYRT_OK) {
+        if(aot) {
+            tinyrt_runtime_aot_config_t config={m->verifier.aot_profile,&m->guard};
+            r=tinyrt_runtime_create_aot(module,module_size,&meta.policy,&host,&config,&meta.aot,&m->runtime);
+        } else r = tinyrt_runtime_create(module, module_size, &meta.policy, &host, &m->runtime);
+    }
+    free(module);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
+    if (m->guard.arm) {
+        r = tinyrt_runtime_set_execution_guard(m->runtime, &m->guard);
+        if (r != TINYRT_OK) return fail_runtime(m, r);
+    }
     m->running = a;
     r = m->storage.load(m->storage.ctx, a.id.app_id, &m->mask, m->values);
     if (r != TINYRT_OK)
@@ -374,7 +400,10 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
 }
 tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t x, int32_t y, int32_t arg,
                                      tinyrt_frame_t *out) {
-    if (!m || !out)
+    if (!out)
+        return TINYRT_INVALID_ARGUMENT;
+    out->count = 0;
+    if (!m)
         return TINYRT_INVALID_ARGUMENT;
     if (!m->runtime)
         return TINYRT_NOT_FOUND;
@@ -399,6 +428,9 @@ tinyrt_status_t tinyrt_manager_stats(tinyrt_manager_t *m,tinyrt_store_stats_t *o
 
 uint32_t tinyrt_manager_clock_interval_ms(const tinyrt_manager_t *m) {
     return tinyrt_runtime_clock_interval_ms(m?m->runtime:NULL);
+}
+uint32_t tinyrt_manager_input_events(const tinyrt_manager_t *m) {
+    return tinyrt_runtime_input_events(m?m->runtime:NULL);
 }
 
 size_t tinyrt_manager_memory_used(const tinyrt_manager_t *m) {

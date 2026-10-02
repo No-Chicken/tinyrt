@@ -48,6 +48,11 @@
       "permission": 1
     },
     {
+      "name": "input_events",
+      "signature": "(i)i",
+      "permission": 2
+    },
+    {
       "name": "kv_get",
       "signature": "(ii)i",
       "permission": 4
@@ -124,5 +129,17 @@
       "event"
     ],
     "scheduling": "one next callback after completion, no catch-up loop"
+  },
+  "optional_input": {
+    "import": "input_events",
+    "allowed_masks": [
+      0,
+      56
+    ],
+    "init_only": true,
+    "press": 3,
+    "move": 4,
+    "cancel": 5,
+    "legacy_release": 1
   }
 }

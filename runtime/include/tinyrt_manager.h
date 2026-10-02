@@ -14,10 +14,14 @@ typedef struct {
  * on this owner thread; close manager before shutting down the runtime. */
 tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *,const tinyrt_package_verifier_t *,const tinyrt_manager_storage_t *,tinyrt_manager_t **);
 void tinyrt_manager_close(tinyrt_manager_t *);
+/* Configure before start, while no instance is live. Context outlives manager;
+ * the same guard applies separately to init/event/render/stop callbacks. */
+tinyrt_status_t tinyrt_manager_set_execution_guard(tinyrt_manager_t *,const tinyrt_execution_guard_t *);
 /* Opaque inventory revision; same semantics as tinyrt_store_generation. */
 tinyrt_status_t tinyrt_manager_generation(tinyrt_manager_t *,uint64_t *);
 tinyrt_status_t tinyrt_manager_stats(tinyrt_manager_t *,tinyrt_store_stats_t *);
 uint32_t tinyrt_manager_clock_interval_ms(const tinyrt_manager_t *);
+uint32_t tinyrt_manager_input_events(const tinyrt_manager_t *);
 /* Runtime allocator telemetry (not the separately allocated manager/store).
  * NULL returns zero. Limit is TINYRT_RUNTIME_HEAP_LIMIT. */
 size_t tinyrt_manager_memory_used(const tinyrt_manager_t *);
@@ -32,6 +36,11 @@ tinyrt_status_t tinyrt_manager_write(tinyrt_manager_t *,const void *,uint32_t si
 tinyrt_status_t tinyrt_manager_finish(tinyrt_manager_t *);
 void tinyrt_manager_abort(tinyrt_manager_t *);
 tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *,const tinyrt_package_id_t *);
+/* start/event borrow caller-owned, exclusively writable, unpublished output
+ * only for this call, following tinyrt_runtime_render's storage contract.
+ * Publish only TINYRT_OK with count > 0, after persistence has also succeeded.
+ * Failure with non-NULL output sets count to zero; remaining contents may have
+ * changed. Keep the previously displayed frame in separate owned storage. */
 tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *,const tinyrt_package_id_t *,int32_t width,int32_t height,tinyrt_frame_t *);
 tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *,int32_t kind,int32_t x,int32_t y,int32_t arg,tinyrt_frame_t *);
 /* KV setters change RAM. Successful init/event+render coalesce changes into at

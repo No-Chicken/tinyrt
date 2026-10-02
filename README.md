@@ -49,8 +49,11 @@ Existing guests remain valid; new guests require a core revision supporting
 their imports, pinned by the SDK contract snapshot. Unknown imports remain a
 preflight rejection on older hosts. All drawing stays render-only, requires
 DRAW permission, copies values/text, and shares the 128-command limit. The
-host frame including the pixel extension is 137,224 bytes; embedding products must
-budget for every frame copy. The core does not render pixels or choose fonts.
+host frame including the pixel extension is 137,224 bytes. Runtime and manager
+write directly into caller-owned unpublished storage and retain no frame between
+callbacks. Products must budget their display/queue buffers and publish only a
+successful result with a nonzero command count. The core does not render pixels
+or choose fonts.
 Text boxes are single-line, clipped and vertically centered, with font sizes
 18/24/36/48 and left/center/right alignment. See the authoritative guest header
 for bounds and arc angle conventions.

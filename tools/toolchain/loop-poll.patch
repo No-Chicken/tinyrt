@@ -1,0 +1,187 @@
+diff --git a/core/iwasm/compilation/aot_emit_control.c b/core/iwasm/compilation/aot_emit_control.c
+index 80e3795..810ad16 100644
+--- a/core/iwasm/compilation/aot_emit_control.c
++++ b/core/iwasm/compilation/aot_emit_control.c
+@@ -881,12 +881,11 @@ check_suspend_flags(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     LLVMValueRef terminate_addr, terminate_flags, flag, offset, res;
+     LLVMBasicBlockRef terminate_block, non_terminate_block;
+     AOTFuncType *aot_func_type = func_ctx->aot_func->func_type;
+-    bool is_shared_memory =
+-        comp_ctx->comp_data->memories[0].flags & 0x02 ? true : false;
++    bool is_shared_memory = comp_ctx->comp_data->memory_count > 0
++                            && (comp_ctx->comp_data->memories[0].flags & 0x02);
+ 
+-    /* Only need to check the suspend flags when memory is shared since
+-       shared memory must be enabled for multi-threading */
+-    if (!is_shared_memory) {
++    /* Explicit loop polling also applies to unshared and memoryless guests. */
++    if (!is_shared_memory && !comp_ctx->enable_loop_poll) {
+         return true;
+     }
+ 
+@@ -915,6 +914,11 @@ check_suspend_flags(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     /* Set terminate_flags memory access to volatile, so that the value
+         will always be loaded from memory rather than register */
+     LLVMSetVolatile(terminate_flags, true);
++    if (comp_ctx->enable_loop_poll) {
++        /* Pair with the runtime's atomic cancellation request across cores. */
++        LLVMSetOrdering(terminate_flags, LLVMAtomicOrderingAcquire);
++        LLVMSetAlignment(terminate_flags, 4);
++    }
+ 
+     if (!(flag = LLVMBuildAnd(comp_ctx->builder, terminate_flags, I32_ONE,
+                               "termination_flag"))) {
+@@ -978,7 +982,7 @@ aot_compile_op_br(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Terminate or suspend current thread only when this is a backward jump */
+-    if (comp_ctx->enable_thread_mgr
++    if ((comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll)
+         && block_dst->label_type == LABEL_TYPE_LOOP) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+@@ -1060,7 +1064,7 @@ aot_compile_conditional_br(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+ 
+     /* Terminate or suspend current thread only when this is
+        a backward jump */
+-    if (comp_ctx->enable_thread_mgr
++    if ((comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll)
+         && block_dst->label_type == LABEL_TYPE_LOOP) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+@@ -1266,7 +1270,7 @@ aot_compile_op_br_table(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+             }
+         }
+ 
+-        if (comp_ctx->enable_thread_mgr) {
++        if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+             for (i = 0; i <= br_count; i++) {
+                 target_block = get_target_block(func_ctx, br_depths[i]);
+                 if (!target_block)
+@@ -1508,7 +1512,7 @@ commit_gc_and_check_suspend_flags(AOTCompContext *comp_ctx,
+ 
+     /* Terminate or suspend current thread only when this is
+        a backward jump */
+-    if (comp_ctx->enable_thread_mgr
++    if ((comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll)
+         && block_dst->label_type == LABEL_TYPE_LOOP) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+diff --git a/core/iwasm/compilation/aot_emit_function.c b/core/iwasm/compilation/aot_emit_function.c
+index a1bc463..3f9fa96 100644
+--- a/core/iwasm/compilation/aot_emit_function.c
++++ b/core/iwasm/compilation/aot_emit_function.c
+@@ -1450,7 +1450,7 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+     }
+@@ -1860,7 +1860,7 @@ aot_compile_op_call(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+ #endif
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, false))
+             goto fail;
+     }
+@@ -2151,7 +2151,7 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+     }
+@@ -2728,7 +2728,7 @@ aot_compile_op_call_indirect(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, false))
+             goto fail;
+     }
+@@ -2883,7 +2883,7 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, true))
+             return false;
+     }
+@@ -3236,7 +3236,7 @@ aot_compile_op_call_ref(AOTCompContext *comp_ctx, AOTFuncContext *func_ctx,
+     }
+ 
+     /* Insert suspend check point */
+-    if (comp_ctx->enable_thread_mgr) {
++    if (comp_ctx->enable_thread_mgr || comp_ctx->enable_loop_poll) {
+         if (!check_suspend_flags(comp_ctx, func_ctx, false))
+             goto fail;
+     }
+diff --git a/core/iwasm/compilation/aot_llvm.c b/core/iwasm/compilation/aot_llvm.c
+index 5190a39..a001bd7 100644
+--- a/core/iwasm/compilation/aot_llvm.c
++++ b/core/iwasm/compilation/aot_llvm.c
+@@ -2726,6 +2726,7 @@ aot_create_comp_context(const AOTCompData *comp_data, aot_comp_option_t option)
+ 
+     if (option->enable_thread_mgr)
+         comp_ctx->enable_thread_mgr = true;
++    comp_ctx->enable_loop_poll = option->enable_loop_poll;
+ 
+     if (option->enable_tail_call)
+         comp_ctx->enable_tail_call = true;
+diff --git a/core/iwasm/compilation/aot_llvm.h b/core/iwasm/compilation/aot_llvm.h
+index 9f62f66..d996d75 100644
+--- a/core/iwasm/compilation/aot_llvm.h
++++ b/core/iwasm/compilation/aot_llvm.h
+@@ -442,6 +442,7 @@ typedef struct AOTCompContext {
+ 
+     /* Thread Manager */
+     bool enable_thread_mgr;
++    bool enable_loop_poll;
+ 
+     /* Tail Call */
+     bool enable_tail_call;
+diff --git a/core/iwasm/include/aot_comp_option.h b/core/iwasm/include/aot_comp_option.h
+index 069ceab..f7c4332 100644
+--- a/core/iwasm/include/aot_comp_option.h
++++ b/core/iwasm/include/aot_comp_option.h
+@@ -63,6 +63,8 @@ typedef struct AOTCompOption {
+     bool is_sgx_platform;
+     bool enable_bulk_memory;
+     bool enable_thread_mgr;
++    /* Poll the execution environment without enabling guest threading. */
++    bool enable_loop_poll;
+     bool enable_tail_call;
+     bool enable_simd;
+     bool enable_ref_types;
+diff --git a/wamr-compiler/main.c b/wamr-compiler/main.c
+index 62b0dfb..23bd510 100644
+--- a/wamr-compiler/main.c
++++ b/wamr-compiler/main.c
+@@ -160,6 +160,8 @@ print_help()
+     printf("  --disable-bulk-memory     Disable the MVP bulk memory feature\n");
+     printf("  --enable-multi-thread     Enable multi-thread feature, the dependent features bulk-memory and\n");
+     printf("                            thread-mgr will be enabled automatically\n");
++    printf("  --enable-loop-poll        Poll cancellation at loop backedges and function calls,\n");
++    printf("                            including modules without shared memory or guest threads\n");
+     printf("  --enable-tail-call        Enable the post-MVP tail call feature\n");
+     printf("  --disable-simd            Disable the post-MVP 128-bit SIMD feature:\n");
+     printf("                              currently 128-bit SIMD is supported for x86-64 and aarch64 targets,\n");
+@@ -521,6 +523,9 @@ main(int argc, char *argv[])
+             option.enable_bulk_memory = true;
+             option.enable_thread_mgr = true;
+         }
++        else if (!strcmp(argv[0], "--enable-loop-poll")) {
++            option.enable_loop_poll = true;
++        }
+         else if (!strcmp(argv[0], "--enable-tail-call")) {
+             option.enable_tail_call = true;
+         }

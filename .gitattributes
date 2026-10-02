@@ -3,3 +3,6 @@
 *.wasm -text
 *.trpkg -text
 *.bin -text
+# Unified patch context deliberately contains a single space on blank lines.
+patches/wamr/*.patch -whitespace
+tools/toolchain/*.patch -whitespace

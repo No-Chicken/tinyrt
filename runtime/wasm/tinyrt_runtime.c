@@ -1,6 +1,16 @@
 /* WAMR is owned by one serialized worker; this module never touches LVGL. */
 #include "tinyrt_runtime.h"
 #include "wasm_export.h"
+#if WASM_ENABLE_AOT != 0
+#ifdef _MSC_VER
+#pragma warning(push)
+#pragma warning(disable:4244) /* Pinned WAMR inline type accessors. */
+#endif
+#include "aot_runtime.h"
+#ifdef _MSC_VER
+#pragma warning(pop)
+#endif
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -21,6 +31,25 @@ static bool initialized, allocation_failed;
 static unsigned live_instances;
 size_t tinyrt_runtime_memory_used(void) { return allocated; }
 size_t tinyrt_runtime_memory_peak(void) { return peak_allocated; }
+
+#if WASM_ENABLE_AOT != 0
+/* Conservative reservation covers Windows allocation granularity and ESP
+ * cache-line rounding. Aliases share physical storage and count only once. */
+static size_t mapping_charge(uint32_t size) { return ((size_t)size + 65535u) & ~(size_t)65535u; }
+static bool mapping_reserve(void *ctx, uint32_t size)
+{
+    (void)ctx;
+    if (!size || size > TINYRT_RUNTIME_HEAP_LIMIT) { allocation_failed=true;return false; }
+    size_t charge=mapping_charge(size);
+    if (allocated > TINYRT_RUNTIME_HEAP_LIMIT-charge) {
+        allocation_failed=true;return false;
+    }
+    allocated+=charge;
+    if(allocated>peak_allocated)peak_allocated=allocated;
+    return true;
+}
+static void mapping_release(void *ctx, uint32_t size) { (void)ctx;allocated-=mapping_charge(size); }
+#endif
 
 static void *allocate(unsigned int n)
 {
@@ -74,10 +103,11 @@ struct tinyrt_runtime {
     wasm_function_inst_t functions[4];
     tinyrt_package_policy_t policy;
     tinyrt_runtime_host_t host;
-    tinyrt_frame_t frame;
+    tinyrt_execution_guard_t guard;
+    tinyrt_frame_t *frame;
     int32_t width, height;
-    uint32_t clock_interval_ms, callback;
-    bool ready, rendering, failed, stopped, skipped;
+    uint32_t clock_interval_ms, callback, input_events;
+    bool ready, failed, stopped, skipped, aot;
     char error[192];
 };
 
@@ -120,15 +150,16 @@ static bool permission(tinyrt_runtime_t *r, uint32_t required)
 static tinyrt_draw_command_t *command(tinyrt_runtime_t *r, uint32_t kind)
 {
     if (!permission(r, TINYRT_PERMISSION_DRAW)) return NULL;
-    if (!r->rendering) { fail(r, "draw outside render"); return NULL; }
+    if (!r->frame) { fail(r, "draw outside render"); return NULL; }
     if (r->skipped) { fail(r, "draw after skip"); return NULL; }
-    if (r->frame.count >= TINYRT_FRAME_MAX_COMMANDS) {
+    if (r->frame->count >= TINYRT_FRAME_MAX_COMMANDS) {
         fail(r, "frame command limit exceeded"); return NULL;
     }
-    if (r->frame.count == 0 && kind != TINYRT_DRAW_CLEAR) {
+    if (r->frame->count == 0 && kind != TINYRT_DRAW_CLEAR) {
         fail(r, "frame must start with clear"); return NULL;
     }
-    tinyrt_draw_command_t *c = &r->frame.commands[r->frame.count++];
+    if (r->frame->count == 0) r->frame->pixel_bytes = 0;
+    tinyrt_draw_command_t *c = &r->frame->commands[r->frame->count++];
     memset(c, 0, sizeof(*c));
     c->kind = kind;
     return c;
@@ -216,26 +247,26 @@ static int32_t draw_rgb565(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, i
 {
     tinyrt_runtime_t *r=context(e);
     if (!permission(r,TINYRT_PERMISSION_DRAW)) return -1;
-    if (!r->rendering || r->skipped) return fail(r,"pixels outside drawing render");
+    if (!r->frame || r->skipped) return fail(r,"pixels outside drawing render");
     /* Bound dimensions before multiplication; negative i32/large u32 bit
      * patterns must never wrap into a small copy length. */
     if (!rectangle(r,x,y,w,h) || w>256 || h>240 || len!=(uint32_t)w*(uint32_t)h*2u)
         return fail(r,"pixel bounds or length invalid");
-    if (r->frame.pixel_bytes) return fail(r,"one image per frame");
+    if (r->frame->count && r->frame->pixel_bytes) return fail(r,"one image per frame");
     if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
     const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
     if (!p) return fail(r,"pixel memory unavailable");
     tinyrt_draw_command_t *c=command(r,TINYRT_DRAW_RGB565);
     if (!c) return -1;
     c->x=x;c->y=y;c->w=w;c->h=h;
-    memcpy(r->frame.pixels,p,len);r->frame.pixel_bytes=len;
+    memcpy(r->frame->pixels,p,len);r->frame->pixel_bytes=len;
     return 0;
 }
 static int32_t draw_skip(wasm_exec_env_t e)
 {
     tinyrt_runtime_t *r=context(e);
     if (!permission(r,TINYRT_PERMISSION_DRAW)) return -1;
-    if (!r->rendering || r->frame.count || r->skipped) return fail(r,"skip must be the only render operation");
+    if (!r->frame || r->frame->count || r->skipped) return fail(r,"skip must be the only render operation");
     r->skipped=true;return 0;
 }
 static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
@@ -251,6 +282,14 @@ static int32_t kv_get(wasm_exec_env_t e, uint32_t key, int32_t fallback)
     if (!permission(r, TINYRT_PERMISSION_STORAGE)) return -1;
     if (key >= 16 || !r->host.kv_get) return fail(r, "key or storage callback invalid");
     return r->host.kv_get(r->host.ctx, key, fallback);
+}
+static int32_t input_events(wasm_exec_env_t e, uint32_t mask)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_INPUT)) return -1;
+    if (r->callback != 0 || (mask != 0 && mask != TINYRT_INPUT_EVENTS_MASK))
+        return fail(r,"input subscription or callback invalid");
+    r->input_events=mask;return 0;
 }
 static int32_t kv_set(wasm_exec_env_t e, uint32_t key, int32_t value)
 {
@@ -279,12 +318,13 @@ static NativeSymbol natives[] = {
     { "draw_skip", (void *)draw_skip, "()i", NULL },
     { "draw_text", (void *)draw_text, "(iiiii)i", NULL },
     { "draw_text_box", (void *)draw_text_box, "(iiiiiiiii)i", NULL },
+    { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL }
 };
-static const unsigned arity[] = { 1, 7, 1, 5, 6, 6, 0, 5, 9, 2, 2, 0 };
-static const uint32_t required_permission[] = { 8, 1, 1, 1, 1, 1, 1, 1, 1, 4, 4, 8 };
+static const unsigned arity[] = { 1, 7, 1, 5, 6, 6, 0, 5, 9, 1, 2, 2, 0 };
+static const uint32_t required_permission[] = { 8, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -302,6 +342,9 @@ tinyrt_status_t tinyrt_runtime_system_init(void)
     args.native_symbols = natives;
     args.n_native_symbols = (uint32_t)(sizeof(natives) / sizeof(*natives));
     if (!wasm_runtime_full_init(&args)) return TINYRT_NO_MEMORY;
+#if WASM_ENABLE_AOT != 0
+    wasm_runtime_set_aot_mapping_budget(mapping_reserve,mapping_release,NULL);
+#endif
     initialized = true;
     return TINYRT_OK;
 }
@@ -309,6 +352,9 @@ void tinyrt_runtime_system_shutdown(void)
 {
     if (initialized && !live_instances) {
         wasm_runtime_destroy();
+#if WASM_ENABLE_AOT != 0
+        wasm_runtime_set_aot_mapping_budget(NULL,NULL,NULL);
+#endif
         initialized = false;
     }
 }
@@ -419,6 +465,98 @@ static tinyrt_status_t load_module(uint8_t *bytes, uint32_t size, const tinyrt_p
     }
     return TINYRT_OK;
 }
+bool tinyrt_runtime_aot_supported(void) {
+#if WASM_ENABLE_AOT != 0
+    return true;
+#else
+    return false;
+#endif
+}
+static bool guard_valid(const tinyrt_execution_guard_t *g)
+{
+    return g && g->arm && g->disarm && g->timeout_ms && g->timeout_ms<=TINYRT_CALLBACK_TIMEOUT_MAX_MS;
+}
+static bool aot_target_valid(const char value[16])
+{
+    unsigned i=0;
+    for(;i<16 && value[i];++i)
+        if(!((value[i]>='a' && value[i]<='z') || (value[i]>='0' && value[i]<='9')
+             || value[i]=='_' || value[i]=='-'))return false;
+    if(!i || i==16)return false;
+    for(;i<16;++i)if(value[i])return false;
+    return true;
+}
+static bool aot_config_valid(const tinyrt_runtime_aot_config_t *config)
+{
+#if WASM_ENABLE_AOT != 0
+    uint8_t stack_marker;
+    uintptr_t low=(uintptr_t)os_thread_get_stack_boundary(), current=(uintptr_t)&stack_marker;
+    if(!low || low>=current || current-low<=WASM_STACK_GUARD_SIZE)return false;
+#endif
+    if(!tinyrt_runtime_aot_supported() || !config || !config->profile || !config->profile->enabled
+       || config->profile->format_version!=5 || !guard_valid(config->guard)
+       || !aot_target_valid(config->profile->target_arch) || !aot_target_valid(config->profile->target_cpu))return false;
+    for(unsigned i=0;i<sizeof(config->profile->compat_id);++i)if(config->profile->compat_id[i])return true;
+    return false;
+}
+static bool aot_metadata_matches(const tinyrt_runtime_aot_config_t *config,
+                                  const tinyrt_package_aot_metadata_t *meta)
+{
+    const tinyrt_package_aot_profile_t *p=config->profile;
+    return meta && meta->format_version==p->format_version && meta->safety_flags==TINYRT_AOT_REQUIRED_FLAGS
+        && !memcmp(meta->target_arch,p->target_arch,sizeof(p->target_arch))
+        && !memcmp(meta->target_cpu,p->target_cpu,sizeof(p->target_cpu))
+        && !memcmp(meta->compat_id,p->compat_id,sizeof(p->compat_id));
+}
+#if WASM_ENABLE_AOT != 0
+static uint32_t le32(const uint8_t *p)
+{
+    return (uint32_t)p[0] | (uint32_t)p[1]<<8 | (uint32_t)p[2]<<16 | (uint32_t)p[3]<<24;
+}
+static bool aot_preflight(const uint8_t *bytes,uint32_t size,const tinyrt_package_aot_metadata_t *meta)
+{
+    /* Relocatable little-endian target info, no unsupported feature flags or
+     * XIP borrowing. The WAMR loader also verifies machine/ABI compatibility. */
+    static const uint8_t magic[]={0,'a','o','t'};
+    return size>=64 && size<=TINYRT_STORE_MAX_PACKAGE_SIZE && !memcmp(bytes,magic,4)
+        && le32(bytes+4)==meta->format_version && le32(bytes+8)==0 && le32(bytes+12)==48
+        && bytes[20]==1 && bytes[21]==0 && !le32(bytes+32) && !le32(bytes+36)
+        && !le32(bytes+40) && !le32(bytes+44) && bytes[63]==0
+        && !memcmp(bytes+48,meta->target_arch,16);
+}
+static bool aot_module_policy(wasm_module_t module,const tinyrt_package_policy_t *policy)
+{
+    const AOTModule *m=(const AOTModule *)module;
+    if(m->import_memory_count || m->import_table_count || m->import_global_count || m->memory_count!=1
+       || m->table_count>1 || m->start_func_index!=UINT32_MAX || m->is_indirect_mode)return false;
+    const AOTMemory *mem=&m->memories[0];
+    if(mem->flags!=1 || !mem->num_bytes_per_page
+       || !mem->init_page_count || mem->init_page_count>mem->max_page_count
+       || (uint64_t)mem->num_bytes_per_page*mem->max_page_count>(uint64_t)policy->max_memory_pages*65536u)return false;
+    if(m->table_count) {
+        const AOTTableType *t=&m->tables[0].table_type;
+        if(t->flags!=1 || t->elem_type!=0x70 || t->init_size>t->max_size || t->max_size>1024)return false;
+    }
+    return module_policy(module,policy);
+}
+#endif
+static tinyrt_status_t load_aot_module(uint8_t *bytes,uint32_t size,const tinyrt_package_policy_t *policy,
+    const tinyrt_package_aot_metadata_t *meta,wasm_module_t *module,char *error,uint32_t error_size)
+{
+#if WASM_ENABLE_AOT != 0
+    if(!aot_preflight(bytes,size,meta))return TINYRT_VERIFY_FAILED;
+    allocation_failed=false;
+    *module=wasm_runtime_load(bytes,size,error,error_size);
+    if(!*module)return allocation_failed?TINYRT_NO_MEMORY:TINYRT_VERIFY_FAILED;
+    if(!aot_module_policy(*module,policy)) {
+        wasm_runtime_unload(*module);*module=NULL;return TINYRT_VERIFY_FAILED;
+    }
+    return TINYRT_OK;
+#else
+    (void)bytes;(void)size;(void)policy;(void)meta;(void)module;(void)error;(void)error_size;
+    return TINYRT_INVALID_ARGUMENT;
+#endif
+}
 tinyrt_status_t tinyrt_runtime_validate_wasm(void *ctx, const tinyrt_store_io_t *io,
     uint32_t offset, uint32_t size, const tinyrt_package_policy_t *policy)
 {
@@ -443,6 +581,25 @@ tinyrt_status_t tinyrt_runtime_validate_wasm(void *ctx, const tinyrt_store_io_t 
     release(bytes);
     return status;
 }
+tinyrt_status_t tinyrt_runtime_validate_aot(void *ctx,const tinyrt_store_io_t *io,
+    uint32_t offset,uint32_t size,const tinyrt_package_policy_t *policy,const tinyrt_package_aot_metadata_t *meta)
+{
+    const tinyrt_runtime_aot_config_t *config=ctx;
+    if(!initialized || !io || !io->read || !policy_valid(policy) || !aot_config_valid(config))return TINYRT_INVALID_ARGUMENT;
+    if(live_instances)return TINYRT_BUSY;
+    if(size<64 || size>TINYRT_STORE_MAX_PACKAGE_SIZE || offset>UINT32_MAX-size
+       || !aot_metadata_matches(config,meta))return TINYRT_VERIFY_FAILED;
+    uint8_t *bytes=allocate(size);if(!bytes)return TINYRT_NO_MEMORY;
+    tinyrt_status_t status=TINYRT_OK;
+    for(uint32_t pos=0;pos<size;) {
+        uint32_t n=size-pos;if(n>1024)n=1024;
+        status=io->read(io->ctx,offset+pos,bytes+pos,n);if(status!=TINYRT_OK)break;pos+=n;
+    }
+    wasm_module_t module=NULL;char error[192];
+    if(status==TINYRT_OK)status=load_aot_module(bytes,size,policy,meta,&module,error,sizeof(error));
+    if(module)wasm_runtime_unload(module);
+    release(bytes);return status;
+}
 void tinyrt_runtime_destroy(tinyrt_runtime_t *r)
 {
     if (!r) return;
@@ -453,24 +610,32 @@ void tinyrt_runtime_destroy(tinyrt_runtime_t *r)
     release(r);
     live_instances--;
 }
-tinyrt_status_t tinyrt_runtime_create(const void *bytes, uint32_t size,
-    const tinyrt_package_policy_t *policy, const tinyrt_runtime_host_t *host, tinyrt_runtime_t **out)
+static tinyrt_status_t create_runtime(const void *bytes, uint32_t size,
+    const tinyrt_package_policy_t *policy, const tinyrt_runtime_host_t *host,
+    const tinyrt_runtime_aot_config_t *aot_config,const tinyrt_package_aot_metadata_t *meta,tinyrt_runtime_t **out)
 {
     if (!out) return TINYRT_INVALID_ARGUMENT;
     *out = NULL;
     if (!initialized || !bytes || !host || !policy_valid(policy)) return TINYRT_INVALID_ARGUMENT;
     if (live_instances) return TINYRT_BUSY;
-    if (!preflight(bytes, size, policy)) return TINYRT_VERIFY_FAILED;
+    if(aot_config) {
+        if(!aot_config_valid(aot_config))return TINYRT_INVALID_ARGUMENT;
+        if(!aot_metadata_matches(aot_config,meta) || size<64 || size>TINYRT_STORE_MAX_PACKAGE_SIZE)return TINYRT_VERIFY_FAILED;
+    } else if (!preflight(bytes, size, policy)) return TINYRT_VERIFY_FAILED;
     tinyrt_runtime_t *r = allocate((unsigned int)sizeof(*r));
     if (!r) return TINYRT_NO_MEMORY;
     live_instances++;
     r->policy = *policy;
     r->host = *host;
+    r->aot=aot_config!=NULL;
+    if(aot_config)r->guard=*aot_config->guard;
     r->clock_interval_ms=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;r->callback=UINT32_MAX;
     r->bytes = allocate(size);
     if (!r->bytes) { tinyrt_runtime_destroy(r); return TINYRT_NO_MEMORY; }
     memcpy(r->bytes, bytes, size);
-    tinyrt_status_t status = load_module(r->bytes, size, policy, &r->module, r->error, sizeof(r->error));
+    tinyrt_status_t status = aot_config
+        ? load_aot_module(r->bytes,size,policy,meta,&r->module,r->error,sizeof(r->error))
+        : load_module(r->bytes, size, policy, &r->module, r->error, sizeof(r->error));
     if (status != TINYRT_OK) { tinyrt_runtime_destroy(r); return status; }
     allocation_failed = false;
     r->instance = wasm_runtime_instantiate(r->module, 8192, 0, r->error, sizeof(r->error));
@@ -486,13 +651,64 @@ tinyrt_status_t tinyrt_runtime_create(const void *bytes, uint32_t size,
     *out = r;
     return TINYRT_OK;
 }
+tinyrt_status_t tinyrt_runtime_create(const void *bytes,uint32_t size,const tinyrt_package_policy_t *policy,
+    const tinyrt_runtime_host_t *host,tinyrt_runtime_t **out)
+{
+    return create_runtime(bytes,size,policy,host,NULL,NULL,out);
+}
+tinyrt_status_t tinyrt_runtime_create_aot(const void *bytes,uint32_t size,const tinyrt_package_policy_t *policy,
+    const tinyrt_runtime_host_t *host,const tinyrt_runtime_aot_config_t *config,
+    const tinyrt_package_aot_metadata_t *meta,tinyrt_runtime_t **out)
+{
+    if(!config) { if(out)*out=NULL;return TINYRT_INVALID_ARGUMENT; }
+    return create_runtime(bytes,size,policy,host,config,meta,out);
+}
+tinyrt_status_t tinyrt_runtime_set_execution_guard(tinyrt_runtime_t *r, const tinyrt_execution_guard_t *guard)
+{
+    if (!r || r->ready || r->failed || r->callback != UINT32_MAX) return TINYRT_INVALID_ARGUMENT;
+    if ((r->aot && !guard) || (guard && !guard_valid(guard))) return TINYRT_INVALID_ARGUMENT;
+    if (guard) r->guard = *guard;
+    else memset(&r->guard, 0, sizeof(r->guard));
+    return TINYRT_OK;
+}
+void tinyrt_runtime_request_cancel(tinyrt_runtime_t *r)
+{
+    if (r) wasm_runtime_request_exec_env_termination(r->env);
+}
+static void cancel_callback(void *ctx)
+{
+    tinyrt_runtime_request_cancel(ctx);
+}
 static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t argc, uint32_t *argv)
 {
     if (r->failed) return TINYRT_VERIFY_FAILED;
-    wasm_runtime_set_instruction_count_limit(r->env, r->policy.instruction_budget);
+#if WASM_ENABLE_AOT != 0
+    if(r->aot) {
+        uint8_t stack_marker;
+        uintptr_t low=(uintptr_t)os_thread_get_stack_boundary(),current=(uintptr_t)&stack_marker;
+        if(!low || low>=current || current-low<=WASM_STACK_GUARD_SIZE) {
+            r->failed=true;snprintf(r->error,sizeof(r->error),"native stack boundary unavailable");
+            return TINYRT_INVALID_ARGUMENT;
+        }
+    }
+#endif
+    if (r->guard.arm) {
+        tinyrt_status_t status = r->guard.arm(r->guard.ctx, cancel_callback, r, r->guard.timeout_ms);
+        if (status != TINYRT_OK) {
+            r->failed = true;
+            snprintf(r->error, sizeof(r->error), "callback guard could not start");
+            return status;
+        }
+    }
+    if(!r->aot)wasm_runtime_set_instruction_count_limit(r->env, r->policy.instruction_budget);
     r->callback=function;
     bool ok = wasm_runtime_call_wasm(r->env, r->functions[function], argc, argv);
+    if (r->guard.disarm) r->guard.disarm(r->guard.ctx);
     r->callback=UINT32_MAX;
+    if (wasm_runtime_is_exec_env_terminated(r->env)) {
+        r->failed = true;
+        snprintf(r->error, sizeof(r->error), "guest callback cancelled");
+    }
     if (!ok || r->failed || (int32_t)argv[0] != 0) {
         const char *exception = wasm_runtime_get_exception(r->instance);
         if (!r->failed) snprintf(r->error, sizeof(r->error), "%s", exception ? exception : "guest returned failure");
@@ -512,9 +728,11 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || (kind != 1 && kind != 2)) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind > 5) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
-    if (kind == 1 && (!(r->policy.permissions & TINYRT_PERMISSION_INPUT) || x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
+    if (kind != 2 && !(r->policy.permissions & TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
+    if (kind >= 3 && !(r->input_events & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
+    if ((kind == 1 || kind == 3 || kind == 4) && (x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 2 && !(r->policy.permissions & TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
     uint32_t argv[] = { (uint32_t)kind, (uint32_t)x, (uint32_t)y, (uint32_t)arg };
     return invoke(r, 1, 4, argv);
@@ -532,27 +750,29 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r)
 }
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
 {
-    if (!r || !out || !r->ready || r->stopped) return TINYRT_INVALID_ARGUMENT;
+    if (!out) return TINYRT_INVALID_ARGUMENT;
+    out->count = 0;
+    if (!r || !r->ready || r->stopped) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
-    r->frame.count=0;r->frame.pixel_bytes=0;r->skipped=false;
-    memset(r->frame.commands,0,sizeof(r->frame.commands));
-    r->rendering = true;
+    r->skipped = false;
+    r->frame = out;
     uint32_t argv[1] = { 0 };
     tinyrt_status_t status = invoke(r, 2, 0, argv);
-    r->rendering = false;
-    if (status == TINYRT_OK && !r->frame.count && !r->skipped) {
+    r->frame = NULL;
+    if (status == TINYRT_OK && !out->count && !r->skipped) {
         fail(r, "empty frame");
-        return TINYRT_VERIFY_FAILED;
+        status = TINYRT_VERIFY_FAILED;
     }
-    if (status == TINYRT_OK) {
-        if(r->skipped) out->count=0;
-        else *out=r->frame;
-    }
+    if (status != TINYRT_OK) out->count = 0;
     return status;
 }
 uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r)
 {
     return r && r->ready && !r->failed && !r->stopped ? r->clock_interval_ms : TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
+}
+uint32_t tinyrt_runtime_input_events(const tinyrt_runtime_t *r)
+{
+    return r && r->ready && !r->failed && !r->stopped ? r->input_events : 0;
 }
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r)
 {

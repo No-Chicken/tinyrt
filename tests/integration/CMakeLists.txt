@@ -21,3 +21,10 @@ add_test(NAME signed_fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_S
 set_tests_properties(signed_fixtures PROPERTIES FIXTURES_SETUP signed_packages)
 add_test(NAME integration COMMAND test_integration "${CMAKE_CURRENT_BINARY_DIR}/packages")
 set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED signed_packages TIMEOUT 60)
+if(TINYRT_ENABLE_AOT AND TINYRT_AOT_TEST_COMPILER)
+ target_compile_definitions(test_integration PRIVATE TINYRT_TEST_SIGNED_AOT=1)
+ add_test(NAME signed_aot_fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/make_aot_packages.py"
+  "${CMAKE_CURRENT_BINARY_DIR}/packages" "${TINYRT_AOT_TEST_COMPILER}")
+ set_tests_properties(signed_aot_fixtures PROPERTIES FIXTURES_SETUP signed_aot_packages)
+ set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED "signed_packages;signed_aot_packages")
+endif()

@@ -194,6 +194,42 @@ tinyrt_status_t tinyrt_manager_query(tinyrt_manager_t *m, const tinyrt_package_i
                                      tinyrt_app_info_t *out) {
     return m ? tinyrt_store_query(m->store, id, out) : TINYRT_INVALID_ARGUMENT;
 }
+tinyrt_status_t tinyrt_manager_cover_query(tinyrt_manager_t *m,const tinyrt_package_id_t *id,
+                                          tinyrt_package_cover_t *out) {
+    if(!out) return TINYRT_INVALID_ARGUMENT;
+    memset(out,0,sizeof(*out));
+    if(!m || !id) return TINYRT_INVALID_ARGUMENT;
+    if(m->install) return TINYRT_BUSY;
+    tinyrt_app_info_t app;
+    tinyrt_status_t r=tinyrt_store_query(m->store,id,&app);
+    if(r!=TINYRT_OK) return r;
+    /* Reuse authenticated catalog by exact identity; re-list only when stale. */
+    for(unsigned attempt=0;attempt<2;++attempt) {
+        if(m->catalog_valid) for(uint32_t i=0;i<m->catalog_count;++i) {
+            const tinyrt_package_metadata_t *p=&m->catalog[i];
+            if(p->app.package_size==app.package_size && p->app.id.version==id->version &&
+               !memcmp(p->app.id.app_id,id->app_id,32) && !memcmp(p->app.id.sha256,id->sha256,32)) {
+                if(!p->cover.size) return TINYRT_NOT_FOUND;
+                *out=p->cover;return TINYRT_OK;
+            }
+        }
+        if(attempt==0) {
+            uint32_t count=0;r=tinyrt_manager_list(m,m->catalog,&count);
+            if(r!=TINYRT_OK) return r;
+        }
+    }
+    return TINYRT_NOT_FOUND;
+}
+tinyrt_status_t tinyrt_manager_cover_read(tinyrt_manager_t *m,const tinyrt_package_id_t *id,
+                                         uint32_t offset,void *bytes,uint32_t size) {
+    if(!bytes || !size || size>4096) return TINYRT_INVALID_ARGUMENT;
+    tinyrt_package_cover_t cover;
+    tinyrt_status_t r=tinyrt_manager_cover_query(m,id,&cover);
+    if(r!=TINYRT_OK) return r;
+    if(offset>cover.size || size>cover.size-offset) return TINYRT_INVALID_ARGUMENT;
+    return tinyrt_store_read(m->store,id,cover.offset+offset,bytes,size);
+}
+
 tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *m, tinyrt_app_info_t out[TINYRT_STORE_MAX_APPS], uint32_t *count) {
     if (!m || !out || !count)
         return TINYRT_INVALID_ARGUMENT;

@@ -33,6 +33,13 @@ typedef struct {
     uint8_t wamr_commit[20], llvm_commit[20], patch_sha256[32], compat_id[32];
     uint8_t options_sha256[32], compiler_sha256[32], source_wasm_sha256[32];
 } tinyrt_package_aot_metadata_t;
+#define TINYRT_COVER_CODEC_RGB565LE_TWO_SIZES 1u
+#define TINYRT_COVER_HEADER_SIZE 32u
+#define TINYRT_COVER_SECTION_SIZE 133232u
+typedef struct {
+    uint32_t offset, size, codec;
+    uint8_t sha256[32]; /* Complete signed section, including its 32-byte header. */
+} tinyrt_package_cover_t;
 typedef struct {
     tinyrt_app_info_t app;
     char title[64];
@@ -40,6 +47,7 @@ typedef struct {
     tinyrt_package_policy_t policy;
     uint32_t format_version, aot_offset, aot_size;
     tinyrt_package_aot_metadata_t aot;
+    tinyrt_package_cover_t cover;
     tinyrt_package_execution_t execution_kind;
     tinyrt_package_fallback_t fallback_reason;
 } tinyrt_package_metadata_t;

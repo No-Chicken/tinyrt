@@ -44,6 +44,9 @@ def fixtures(folder, header):
         "section_aot_only": envelope(header, [(2,native)]),
         "section_maximum": envelope(header, [(1,WASM),(3,bytes(0x200000-304))]),
     }
+    cover=struct.pack('<8sHHIHHHHII',b'TRCOV001',1,1,32,210,210,150,150,88200,45000)+bytes(133200)
+    names['section_cover']=envelope(header,[(1,WASM),(3,b'resources'),(4,cover)])
+    (folder/'cover.sha256').write_bytes(hashlib.sha256(cover).digest())
     previous = bytearray(good); struct.pack_into("<I", previous, 52, 8)
     names["section_previous_key"] = resign(previous, ec.derive_private_key(43,ec.SECP256R1()))
     outside = bytearray(good); outside[56:88] = b"other.app".ljust(32,b"\0")
@@ -53,8 +56,8 @@ def fixtures(folder, header):
         data = bytearray(good); data[offset:offset+len(value)] = value
         rejects[name] = resign(data)
     for name, offset, value in [
-        ("table_offset",16,260),("table_count_zero",20,0),("table_count_many",20,4),
-        ("entry_size",24,32),("header_flags",28,1),("unknown_section",256,4),
+        ("table_offset",16,260),("table_count_zero",20,0),("table_count_many",20,5),
+        ("entry_size",24,32),("header_flags",28,1),("unknown_section",256,5),
         ("duplicate_section",272,1),("section_flags",260,1),("unaligned",280,319),
         ("overlap",280,304),("gap",280,324),("overflow_offset",280,0xfffffffc),
         ("overflow_size",284,0xffffffff),("empty_section",284,0),
@@ -76,6 +79,14 @@ def fixtures(folder, header):
     bad = bytearray(good); bad[440] ^= 1; rejects["metadata_tamper"] = bytes(bad)
     rejects["truncated"] = good[:-1]
     rejects["trailing"] = good+b"\0"
+    cover_good=names['section_cover'];off=struct.unpack_from('<I',cover_good,296)[0]
+    for name,pos,fmt,value in [('codec',10,'H',2),('width_bomb',16,'H',65535),('size',24,'I',0xffffffff),('version',8,'H',2)]:
+        bad=bytearray(cover_good);struct.pack_into('<'+fmt,bad,off+pos,value)
+        rejects['cover_'+name]=resign(bad)
+    for name,pos,value in [('overflow',300,0xffffffff),('duplicate',288,3),('unknown',288,5),('truncated_size',300,133231)]:
+        bad=bytearray(cover_good);struct.pack_into('<I',bad,pos,value)
+        rejects['cover_'+name]=resign(bad)
+    bad=bytearray(cover_good);bad[-1]^=1;rejects['cover_unsigned_tamper']=bytes(bad)
     for name, content in names.items(): (folder/(name+".pkg")).write_bytes(content)
     for name, content in rejects.items(): (folder/("section_reject_"+name+".pkg")).write_bytes(content)
     (folder/"section_reject.txt").write_text("\n".join("section_reject_"+name for name in rejects),encoding="ascii")

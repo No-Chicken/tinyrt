@@ -1,6 +1,6 @@
 # TinyRT 应用包格式 1
 
-SDK 与固件版本为 0.1.0。当前唯一包格式为 1，使用 `.trpkg`，256 字节头后包含 section 表、Wasm、可选 AOT 与 resources。完整包不得超过 2 MiB。旧内部直接载荷布局与旧内部 section 格式号不兼容，旧包需用当前 SDK 重新构建。包元数据是受信发布方的声明，不能证明任意机器码具有边界检查或可取消性。
+SDK 与固件版本为 0.1.0。当前唯一包格式为 1，使用 `.trpkg`，256 字节头后包含 section 表、Wasm、可选 AOT、resources 与 cover。完整包不得超过 2 MiB。旧内部直接载荷布局与旧内部 section 格式号不兼容，旧包需用当前 SDK 重新构建。包元数据是受信发布方的声明，不能证明任意机器码具有边界检查或可取消性。
 
 ## 头与 section 表
 
@@ -9,7 +9,7 @@ SDK 与固件版本为 0.1.0。当前唯一包格式为 1，使用 `.trpkg`，25
 | 偏移 | 字段 |
 |---|---|
 | 16 | u32 table_offset=256 |
-| 20 | u32 section_count，1..3 |
+| 20 | u32 section_count，1..4 |
 | 24 | u32 section_entry_size=16 |
 | 28 | u32 reserved=0 |
 
@@ -26,7 +26,7 @@ offset32..151 的字段如下表；字符串 NUL 终止，NUL 后全零。offset
 
 签名输入为 `b"TinyRT-package-v1\0" + package[:192]`，ECDSA-P256-SHA256。整包身份仍为 SHA-256(package)，包含签名。
 
-每条 section 表项为四个 u32：`kind, flags=0, offset, size`。kind=1 Wasm、2 AOT、3 resources。按 kind 严格递增；未知、重复、乱序、空 section、溢出、重叠或非规范间隙均拒绝。至少包含 Wasm 或 AOT。Wasm 大于 8 字节；resources 为空时省略该项。
+每条 section 表项为四个 u32：`kind, flags=0, offset, size`。kind=1 Wasm、2 AOT、3 resources、4 cover。按 kind 严格递增；未知、重复、乱序、空 section、溢出、重叠或非规范间隙均拒绝。至少包含 Wasm 或 AOT。Wasm 大于 8 字节；resources 为空时省略该项。
 
 表后立即开始内容。每段 offset 必须等于上一段结尾向上对齐至 4 字节的位置；最多三个填充字节且必须全零。首段紧接表；最后一段结尾必须恰好等于 total_size，不允许末尾填充。所有边界先用减法验证再相加。
 
@@ -116,3 +116,22 @@ python tools/package.py development-public-key --output development-public.sec1
 ```
 
 生产签名用`--key application-signing.pem --key-id 100`代替开发钥选项。工具使用确定性ECDSA并规范为low-S，相同输入得到相同完整包和安装身份；仍仅检查基础Wasm魔数，设备负责完整结构与ABI验证。输出不会覆盖源Wasm、资源或签名输入。开发AOT从清单执行`python tools/tinyrt.py pack app --aot --development-key --wamrc path/to/wamrc.exe`，详见SDK指南。
+
+## 可选 cover section（kind=4）
+
+开发者在 `app.json` 设置 `"cover": "cover.png"`。输入路径必须位于应用目录中（解析链接后也不得越界）；PNG 最大 65536 字节，必须为单帧 210×210。SDK 在解码前验证 PNG/IHDR 尺寸，随后验证实际解码尺寸；透明像素叠于 `#101418`。Wasm、开发 AOT 和发布 AOT 使用同一转换与验证流程。
+
+设备接收预生成的两档小端 RGB565，无需设备 PNG 解码器。section 总长严格为 133232 字节；32 字节头后是 88200 字节 210×210 像素和 45000 字节 150×150 像素（SDK Lanczos 缩小）。像素逐行排列，没有步幅填充。头格式：
+
+| 偏移 | 字段 |
+|---|---|
+| 0 | magic[8] = `TRCOV001` |
+| 8、10 | u16 schema=1、codec=1 (`RGB565LE_TWO_SIZES`) |
+| 12 | u32 header_size=32 |
+| 16、18 | u16 main_width=210、main_height=210 |
+| 20、22 | u16 side_width=150、side_height=150 |
+| 24、28 | u32 main_size=88200、side_size=45000 |
+
+所有字段必须精确匹配；未知 codec、重复 cover、非规范边界或尺寸均拒绝。cover 和 section 表共同受到原包签名及 payload SHA-256 保护，计入 2 MiB 整包限制。cover 不属于 Guest `resources`，不会改变 `asset_read` 相对偏移；它只供 Host 大厅与手机展示。没有 cover 时使用默认封面。
+
+`tinyrt_package_metadata_t.cover` 提供经过认证的 package-relative offset、size、codec 与完整 cover section（包含 32 字节头）的 SHA-256。`tinyrt_manager_cover_query` 按完整应用 identity 查询；无 cover 返回 `TINYRT_NOT_FOUND`。`tinyrt_manager_cover_read` 以 cover-relative offset 精确读取 1..4096 字节，拒绝越界；安装期间返回 `TINYRT_BUSY`。API 遵循 manager 的单线程 owner 约束。

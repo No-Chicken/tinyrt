@@ -71,6 +71,13 @@ int main(int argc,char **argv) {
         CHECK(!memcmp(metadata.app.id.sha256,expected,32));
     }
     fixture(argv[1],"valid.pkg");expected_wasm_offset=288;
+    fixture(argv[1],"section_cover.pkg");expected_wasm_offset=304;
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
+    CHECK(metadata.assets_offset==320 && metadata.assets_size==9);
+    CHECK(metadata.cover.offset==332 && metadata.cover.size==133232 && metadata.cover.codec==1);
+    CHECK(load(argv[1],"cover.sha256",expected,32)==32);
+    CHECK(!memcmp(metadata.cover.sha256,expected,32) && !bad_reads);
+    fixture(argv[1],"valid.pkg");expected_wasm_offset=288;
     key.public_key[64]^=1;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
     key.public_key[64]^=1;

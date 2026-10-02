@@ -79,7 +79,7 @@ static bool parse_header(const uint8_t h[256], uint32_t length, tinyrt_package_m
     if(format!=1 || memcmp(h,"TRPKG001",8) || get16(h+10)!=256 ||
        get32(h+12)!=length || !all_zero(h+184,8)) return false;
     m->format_version=format;
-    if(get32(h+16)!=256 || get32(h+20)<1 || get32(h+20)>3 ||
+    if(get32(h+16)!=256 || get32(h+20)<1 || get32(h+20)>4 ||
        get32(h+24)!=16 || get32(h+28)) return false;
     m->app.id.version=get32(h+32);
     m->policy.abi_version=get32(h+36); m->policy.permissions=get32(h+40);
@@ -114,7 +114,7 @@ static tinyrt_status_t parse_sections(const tinyrt_store_io_t *io,uint32_t base,
         if(r!=TINYRT_OK) return r;
         uint32_t kind=get32(entry),off=get32(entry+8),size=get32(entry+12);
         uint32_t pad=(4-(cursor&3u))&3u;
-        if(kind<=previous || kind>3 || get32(entry+4) || pad>length-cursor ||
+        if(kind<=previous || kind>4 || get32(entry+4) || pad>length-cursor ||
            off!=cursor+pad || !size || off>length || size>length-off) return TINYRT_VERIFY_FAILED;
         if(pad) {
             r=io->read(io->ctx,base+cursor,padding,pad);
@@ -127,7 +127,19 @@ static tinyrt_status_t parse_sections(const tinyrt_store_io_t *io,uint32_t base,
         } else if(kind==2) {
             if(size<=256) return TINYRT_VERIFY_FAILED;
             m->aot_offset=off+256;m->aot_size=size-256;
-        } else {m->assets_offset=off;m->assets_size=size;}
+        } else if(kind==3) {m->assets_offset=off;m->assets_size=size;}
+        else {
+            uint8_t cover[32];
+            if(size!=TINYRT_COVER_SECTION_SIZE) return TINYRT_VERIFY_FAILED;
+            r=io->read(io->ctx,base+off,cover,sizeof(cover));
+            if(r!=TINYRT_OK) return r;
+            if(memcmp(cover,"TRCOV001",8) || get16(cover+8)!=1 ||
+               get16(cover+10)!=TINYRT_COVER_CODEC_RGB565LE_TWO_SIZES || get32(cover+12)!=32 ||
+               get16(cover+16)!=210 || get16(cover+18)!=210 ||
+               get16(cover+20)!=150 || get16(cover+22)!=150 ||
+               get32(cover+24)!=88200 || get32(cover+28)!=45000) return TINYRT_VERIFY_FAILED;
+            m->cover.offset=off;m->cover.size=size;m->cover.codec=get16(cover+10);
+        }
         previous=kind;cursor=off+size;
     }
     return cursor==length && (m->wasm_size || m->aot_size)?TINYRT_OK:TINYRT_VERIFY_FAILED;
@@ -217,10 +229,11 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
         r=inspect_aot(v,trusted,io,off,&m);
         if(r!=TINYRT_OK) return r;
     }
-    tr_package_hash_t *whole=NULL,*payload=NULL,*source=NULL;
+    tr_package_hash_t *whole=NULL,*payload=NULL,*source=NULL,*cover=NULL;
     r=tr_package_hash_new(&whole);
     if(r==TINYRT_OK) r=tr_package_hash_new(&payload);
     if(r==TINYRT_OK && m.aot_size && m.wasm_size) r=tr_package_hash_new(&source);
+    if(r==TINYRT_OK && m.cover.size) r=tr_package_hash_new(&cover);
     if(r==TINYRT_OK) r=tr_package_hash_update(whole,header,sizeof(header));
     uint8_t block[1024];
     for(uint32_t pos=256;r==TINYRT_OK && pos<length;) {
@@ -234,6 +247,11 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
             uint32_t end=pos+n<m.wasm_offset+m.wasm_size?pos+n:m.wasm_offset+m.wasm_size;
             r=tr_package_hash_update(source,block+begin-pos,end-begin);
         }
+        if(r==TINYRT_OK && cover && pos<m.cover.offset+m.cover.size && pos+n>m.cover.offset) {
+            uint32_t begin=pos>m.cover.offset?pos:m.cover.offset;
+            uint32_t end=pos+n<m.cover.offset+m.cover.size?pos+n:m.cover.offset+m.cover.size;
+            r=tr_package_hash_update(cover,block+begin-pos,end-begin);
+        }
         pos+=n;
     }
     if(r==TINYRT_OK) r=tr_package_hash_finish(payload,digest);
@@ -243,7 +261,8 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
         r=tr_package_hash_finish(source,digest);
         if(r==TINYRT_OK && memcmp(digest,m.aot.source_wasm_sha256,32)) r=TINYRT_VERIFY_FAILED;
     }
-    tr_package_hash_free(source);tr_package_hash_free(payload); tr_package_hash_free(whole);
+    if(r==TINYRT_OK && cover) r=tr_package_hash_finish(cover,m.cover.sha256);
+    tr_package_hash_free(cover);tr_package_hash_free(source);tr_package_hash_free(payload); tr_package_hash_free(whole);
     if(r!=TINYRT_OK) return r;
     if(m.wasm_size) r=validation_status(v->validate_wasm(v->wasm_ctx,io,off+m.wasm_offset,m.wasm_size,&m.policy));
     if(r==TINYRT_OK && m.execution_kind==TINYRT_PACKAGE_EXEC_AOT)

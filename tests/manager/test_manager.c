@@ -20,6 +20,7 @@ extern int runtime_skip_write;
 extern int runtime_skip_frame;
 extern int metadata_swap;
 extern int metadata_aot;
+extern int metadata_cover;
 extern unsigned runtime_aot_creates;
 static tinyrt_status_t load(void*c,const char*id,uint32_t*m,int32_t v[16]) {(void)c;(void)id;*m=kv_mask;memcpy(v,kv_values,sizeof(kv_values));return TINYRT_OK;}
 static tinyrt_status_t save(void*c,const char*id,uint32_t m,const int32_t v[16]) {(void)c;(void)id;if(fail_save)return TINYRT_IO_ERROR;kv_mask=m;memcpy(kv_values,v,sizeof(kv_values));saves++;return TINYRT_OK;}
@@ -38,6 +39,27 @@ static tinyrt_app_info_t install(tinyrt_manager_t*m,uint32_t version) {
  CHECK(tinyrt_manager_begin(m,&a)==TINYRT_OK);
  CHECK(tinyrt_manager_write(m,package,sizeof(package))==TINYRT_OK);
  CHECK(tinyrt_manager_finish(m)==TINYRT_OK);return a;
+}
+static void test_cover_ranges_and_identity(void) {
+ fake_nor_init(&nor);tinyrt_manager_t*m=open_manager();tinyrt_app_info_t a=install(m,1);
+ tinyrt_package_cover_t cover;uint8_t bytes[16];
+ CHECK(tinyrt_manager_cover_query(m,&a.id,&cover)==TINYRT_NOT_FOUND && cover.size==0);
+ tinyrt_manager_close(m);metadata_cover=1;m=open_manager();
+ CHECK(tinyrt_manager_cover_query(m,&a.id,&cover)==TINYRT_OK && cover.offset==44 && cover.size==356 && cover.codec==1);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,0,bytes,sizeof(bytes))==TINYRT_OK && bytes[0]==13);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,355,bytes,1)==TINYRT_OK);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,356,bytes,1)==TINYRT_INVALID_ARGUMENT);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,UINT32_MAX,bytes,1)==TINYRT_INVALID_ARGUMENT);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,0,bytes,4097)==TINYRT_INVALID_ARGUMENT);
+ tinyrt_package_id_t wrong=a.id;wrong.sha256[0]^=1;
+ CHECK(tinyrt_manager_cover_query(m,&wrong,&cover)==TINYRT_NOT_FOUND && cover.size==0);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_cover_read(m,&a.id,0,bytes,1)==TINYRT_OK);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+ tinyrt_app_info_t next;test_package_make(package,sizeof(package),"counter",2,13,&next);
+ CHECK(tinyrt_manager_begin(m,&next)==TINYRT_OK);
+ CHECK(tinyrt_manager_cover_query(m,&a.id,&cover)==TINYRT_BUSY);
+ tinyrt_manager_abort(m);tinyrt_manager_close(m);metadata_cover=0;
 }
 static void test_aot_selection(void) {
  fake_nor_init(&nor);metadata_aot=1;tinyrt_manager_t*m=open_manager();
@@ -225,6 +247,7 @@ int main(void) {
  CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_VERIFY_FAILED&&count==0);metadata_swap=0;
  tinyrt_manager_close(m);m=open_manager();tinyrt_app_info_t out;
  CHECK(tinyrt_manager_query(m,&b.id,&out)==TINYRT_OK);tinyrt_manager_close(m);
+ test_cover_ranges_and_identity();
  test_aot_selection();
  printf("MANAGER_TESTS checks=%u PASS (real NOR/store, explicit runtime/crypto boundaries)\n",checks);return 0;
 }

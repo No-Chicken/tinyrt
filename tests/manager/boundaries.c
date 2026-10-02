@@ -11,6 +11,7 @@ int runtime_skip_write;
 int runtime_skip_frame;
 int metadata_swap;
 int metadata_aot;
+int metadata_cover;
 unsigned runtime_aot_creates;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -20,6 +21,7 @@ tinyrt_status_t tinyrt_package_verify(void *c,const tinyrt_store_io_t *io,uint32
 tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,const tinyrt_store_io_t *io,uint32_t o,uint32_t n,tinyrt_package_metadata_t *m) {
  if(runtime_live)return TINYRT_BUSY;
  (void)v;memset(m,0,sizeof(*m));tinyrt_status_t r=test_package_verify(NULL,io,o,n,&m->app);
+ if(metadata_cover){m->cover.offset=44;m->cover.size=n-44;m->cover.codec=1;memset(m->cover.sha256,13,32);}
  m->wasm_offset=0;m->wasm_size=n;m->policy=(tinyrt_package_policy_t){1,15,1,1000};
  m->execution_kind=metadata_aot?TINYRT_PACKAGE_EXEC_AOT:TINYRT_PACKAGE_EXEC_WASM;
  m->aot_offset=44;m->aot_size=n-44;

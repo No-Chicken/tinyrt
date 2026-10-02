@@ -12,7 +12,10 @@
       "TINYRT_AOT_LOOP_POLL": 1,
       "TINYRT_AOT_BOUNDS_CHECKS": 2,
       "TINYRT_AOT_STACK_CHECKS": 4,
-      "TINYRT_AOT_REQUIRED_FLAGS": 7
+      "TINYRT_AOT_REQUIRED_FLAGS": 7,
+      "TINYRT_COVER_CODEC_RGB565LE_TWO_SIZES": 1,
+      "TINYRT_COVER_HEADER_SIZE": 32,
+      "TINYRT_COVER_SECTION_SIZE": 133232
     },
     "runtime/include/tinyrt_store.h": {
       "TINYRT_STORE_SIZE": 5111808,
@@ -40,7 +43,10 @@
       "TINYRT_CAP_STORAGE": 32,
       "TINYRT_OP_APP_INFO": 26,
       "TINYRT_OP_RUNTIME_INFO": 27,
-      "TINYRT_CAP_PACKAGE_SECTIONS": 64
+      "TINYRT_CAP_PACKAGE_SECTIONS": 64,
+      "TINYRT_OP_APP_COVER": 28,
+      "TINYRT_OP_MOBILE_STATUS": 29,
+      "TINYRT_CAP_COVER_MOBILE_CONFIRM": 128
     }
   },
   "package": {
@@ -51,13 +57,14 @@
     "max_package_size": 2097152,
     "table_offset": 256,
     "entry_size": 16,
-    "max_sections": 3,
+    "max_sections": 4,
     "section_alignment": 4,
     "padding": "minimal zero bytes between sections; no trailing padding",
     "section_kinds": {
       "wasm": 1,
       "aot": 2,
-      "resources": 3
+      "resources": 3,
+      "cover": 4
     },
     "entry_fields": [
       "kind:u32le",
@@ -81,7 +88,21 @@
       "compiler_sha256": 184,
       "source_wasm_sha256": 216
     },
-    "required_safety_flags": 7
+    "required_safety_flags": 7,
+    "cover": {
+      "magic": "TRCOV001",
+      "schema": 1,
+      "codec": 1,
+      "header_size": 32,
+      "section_size": 133232,
+      "main_width": 210,
+      "main_height": 210,
+      "side_width": 150,
+      "side_height": 150,
+      "main_pixels_offset": 32,
+      "side_pixels_offset": 88232,
+      "sha256": "whole section including header"
+    }
   },
   "management": {
     "magic": 167,
@@ -309,7 +330,8 @@
         },
         "section_bits": {
           "offset": 6,
-          "type": "u16le"
+          "type": "u16le",
+          "semantics": "bit0 Wasm, bit1 AOT, bit2 resources, bit3 fixed 133232-byte cover. No unknown bits."
         },
         "app": {
           "offset": 8,
@@ -426,6 +448,36 @@
         }
       },
       "semantics": "Profile fields are zero when AOT is disabled. Maximum logical payload remains 256 bytes including status u16."
+    },
+    "cover": {
+      "hello_capability_bit": 128,
+      "opcode": 28,
+      "request_size": 74,
+      "request": "identity68 + offset:u32le + requested_length:u16le (1..206)",
+      "response": "schema:u16le=1, codec:u16le=1, total:u32le=133232, offset:u32le, chunk_length:u16le, reserved:u16le=0, sha256[32], data[chunk_length]",
+      "response_header_size": 48,
+      "max_chunk": 206,
+      "semantics": "Offsets relative to complete signed cover section. Exact identity required; missing cover returns NOT_FOUND."
+    },
+    "mobile_confirmation": {
+      "hello_capability_bit": 128,
+      "opcodes": [
+        19,
+        20
+      ],
+      "receipt": "empty for immediate completion; otherwise schema:u16le=1, kind:u8 (delete=1/install=2), reserved:u8=0, nonzero token:u32le",
+      "status_opcode": 29,
+      "status_request": "token:u32le",
+      "status_response": "schema:u16le=1, kind:u8, state:u8, token:u32le, result:u16le, reserved:u16le=0",
+      "states": {
+        "waiting": 1,
+        "processing": 2,
+        "done": 3,
+        "cancelled": 4,
+        "timed_out": 5
+      },
+      "confirmation_timeout_ms": 15000,
+      "semantics": "Receipt is not completion. Poll same connection token until done. Waiting/processing result=BUSY; terminal done result is operation result. Cancel/timeout reject without transfer. Disconnect invalidates token."
     }
   },
   "store": {

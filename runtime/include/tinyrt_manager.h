@@ -31,6 +31,12 @@ tinyrt_status_t tinyrt_manager_list(tinyrt_manager_t *,tinyrt_package_metadata_t
  * these exact identities; begin permits identical-package repair or an upgrade. */
 tinyrt_status_t tinyrt_manager_list_quarantined(tinyrt_manager_t *,tinyrt_app_info_t out[TINYRT_STORE_MAX_APPS],uint32_t *count);
 tinyrt_status_t tinyrt_manager_query(tinyrt_manager_t *,const tinyrt_package_id_t *,tinyrt_app_info_t *);
+/* Authenticated optional cover metadata; absent cover returns NOT_FOUND.
+ * Single-owner APIs, unavailable during install. Read exact ranges <=4096 bytes;
+ * offsets are relative to the complete cover section, including its header. */
+tinyrt_status_t tinyrt_manager_cover_query(tinyrt_manager_t *,const tinyrt_package_id_t *,tinyrt_package_cover_t *);
+tinyrt_status_t tinyrt_manager_cover_read(tinyrt_manager_t *,const tinyrt_package_id_t *,uint32_t offset,void *,uint32_t size);
+
 tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *,const tinyrt_app_info_t *);
 tinyrt_status_t tinyrt_manager_write(tinyrt_manager_t *,const void *,uint32_t size);
 tinyrt_status_t tinyrt_manager_finish(tinyrt_manager_t *);

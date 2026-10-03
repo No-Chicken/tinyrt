@@ -104,6 +104,12 @@ static int parse_u32(const char *s, uint32_t *out) {
     if (errno || !end || *end || value>UINT32_MAX) return 0;
     *out=(uint32_t)value; return 1;
 }
+static int parse_mg(const char *s, int32_t *out) {
+    if (!s || !*s) return 0;
+    errno=0; char *end=NULL; long value=strtol(s,&end,10);
+    if (errno || !end || *end || value < -16000 || value > 16000) return 0;
+    *out=(int32_t)value; return 1;
+}
 static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
                             int32_t kind, int32_t x, int32_t y, int32_t arg) {
     saved_t before=saved; double start=milliseconds();
@@ -133,7 +139,7 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
 }
 static int usage(void) {
     fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..31] [--assets resources.bin]\n"
-        "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1>\n"
+        "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1> | motion <ax_mg> <ay_mg> <az_mg>\n"
         "       time <uint32_ms> | tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
         "advance uses the guest clock interval and monotonic virtual time; capture does not run callbacks.\n"
         "KV is RAM-only. stop/restart/EOF stop normally; reboot forces teardown.\n");
@@ -211,6 +217,11 @@ int main(int argc, char **argv) {
             if(rt && (!(policy.permissions&TINYRT_PERMISSION_INPUT) ||
                       !(tinyrt_runtime_input_events(rt)&(1u<<6)))) continue;
             result=cycle(rt,"key",0,6,(int32_t)x,(int32_t)y,0);
+        } else if (!strcmp(op,"motion")) {
+            int32_t ax,ay,az;
+            if (!parse_mg(a,&ax) || !parse_mg(b,&ay) || !parse_mg(extra,&az) || strtok(NULL," \t\r\n")) { exit_code=usage();break; }
+            if (rt && (!(policy.permissions&TINYRT_PERMISSION_INPUT) || !(tinyrt_runtime_input_events(rt)&128u))) continue;
+            result=cycle(rt,"motion",0,7,ax,ay,az);
         } else if (!strcmp(op,"tick") && parse_u32(a,&x) && !b) {
             now_ms_value=x; int32_t signed_now; memcpy(&signed_now,&x,sizeof(x));
             result=cycle(rt,"tick",0,2,0,0,signed_now);

@@ -38,8 +38,13 @@ TINYRT_IMPORT(runtime_backend) int32_t runtime_backend(void);
 #define TINYRT_INPUT_LIFECYCLE_MASK 0x38u
 #define TINYRT_USER_KEY_EVENT 6
 #define TINYRT_INPUT_USER_KEY_MASK 0x40u
+#define TINYRT_EV_MOTION 7
+#define TINYRT_IN_MOTION 0x80u
+/* MOTION: x=ax, y=ay, arg=az, signed mg in raw sensor axes, -16000..16000.
+ * Opt in with INPUT permission; OR 0x80 into any existing subscription mask.
+ * Sensor unavailable/stale means no event. Screen-axis mapping belongs to Guest. */
 /* USER_KEY_EVENT: x=1, y=1 pressed / 0 released, arg=0. Opt in during init.
- * Accept masks 0, 0x38, 0x40 or 0x78. CANCEL clears touch and keys. */
+ * Accept masks 0, 0x38, 0x40 or 0x78, optionally OR 0x80. CANCEL clears touch and keys. */
 /* Export these exact signatures. Return 0 on success. Each host call is bounded;
  * only render may draw, and every drawn frame starts with draw_clear. Text is UTF-8,
  * 1..63 bytes. Storage keys 0..15 contain signed 32-bit values; host scopes to app.

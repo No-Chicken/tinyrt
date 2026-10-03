@@ -22,9 +22,21 @@ int main(void) {
         CHECK(tinyrt_runtime_event(r,3,-1,0,0)==TINYRT_INVALID_ARGUMENT);
         CHECK(tinyrt_runtime_event(r,4,0,466,0)==TINYRT_INVALID_ARGUMENT);
         CHECK(tinyrt_runtime_event(r,6,0,0,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,7,700,0,1000)==TINYRT_INVALID_ARGUMENT);
         CHECK(tinyrt_runtime_event(r,1,0,0,0)==TINYRT_OK);
         tinyrt_runtime_destroy(r);}
     const char *keys[]={"input_key","input_key_only"};
+    const char *motion[]={"input_motion_128","input_motion_184","input_motion_192","input_motion_248"};
+    for(unsigned i=0;i<4;i++) {
+        r=create(motion[i],15,TINYRT_OK);if(!r)continue;
+        CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,7,-700,120,1000)==TINYRT_OK);
+        CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK&&frame.commands[0].rgb==7);
+        CHECK(tinyrt_runtime_event(r,7,16001,0,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,7,0,-16001,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,7,0,0,16001)==TINYRT_INVALID_ARGUMENT);
+        tinyrt_runtime_destroy(r);
+    }
     for(unsigned i=0;i<2;i++){r=create(keys[i],15,TINYRT_OK);if(!r)continue;
         CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
         CHECK(tinyrt_runtime_event(r,6,1,1,0)==TINYRT_OK);

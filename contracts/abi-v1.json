@@ -156,7 +156,11 @@
       0,
       56,
       64,
-      120
+      120,
+      128,
+      184,
+      192,
+      248
     ],
     "init_only": true,
     "press": 3,
@@ -170,6 +174,19 @@
       "released_y": 0,
       "arg": 0,
       "power_key_exposed": false
+    },
+    "motion": {
+      "event": 7,
+      "mask": 128,
+      "x": "ax_mg",
+      "y": "ay_mg",
+      "arg": "az_mg",
+      "range_mg": [
+        -16000,
+        16000
+      ],
+      "axes": "raw sensor",
+      "delivery": "opt-in, approximately 30 Hz; no stale samples"
     }
   },
   "resources": {

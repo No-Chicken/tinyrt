@@ -329,7 +329,8 @@ static int32_t input_events(wasm_exec_env_t e, uint32_t mask)
 {
     tinyrt_runtime_t *r=context(e);
     if (!permission(r,TINYRT_PERMISSION_INPUT)) return -1;
-    if (r->callback != 0 || (mask != 0 && mask != 56 && mask != 64 && mask != 120))
+    uint32_t pointer_mask = mask & ~128u;
+    if (r->callback != 0 || (pointer_mask != 0 && pointer_mask != 56 && pointer_mask != 64 && pointer_mask != 120))
         return fail(r,"input subscription or callback invalid");
     r->input_events=mask;return 0;
 }
@@ -776,12 +777,13 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || kind < 1 || kind > 6) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind > 7) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     if (kind != 2 && !(r->policy.permissions & TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
     if (kind >= 3 && !(r->input_events & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
     if ((kind == 1 || kind == 3 || kind == 4) && (x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 6 && (x != 1 || (y != 0 && y != 1) || arg != 0)) return TINYRT_INVALID_ARGUMENT;
+    if (kind == 7 && (x < -16000 || x > 16000 || y < -16000 || y > 16000 || arg < -16000 || arg > 16000)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 2 && !(r->policy.permissions & TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
     uint32_t argv[] = { (uint32_t)kind, (uint32_t)x, (uint32_t)y, (uint32_t)arg };
     return invoke(r, 1, 4, argv);

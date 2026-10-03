@@ -14,6 +14,8 @@ int metadata_aot;
 int metadata_cover;
 int metadata_audio;
 int runtime_audio;
+int runtime_resource;
+uint8_t runtime_resource_bytes[4096];
 unsigned runtime_aot_creates;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -48,6 +50,7 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r) {
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,int32_t y,int32_t arg) {
  (void)kind;(void)x;(void)y;(void)arg;
+ if(runtime_resource)return r->host.asset_read(r->host.ctx,(uint32_t)x,runtime_resource_bytes,(uint32_t)y);
  if(runtime_audio)return r->host.audio_play(r->host.ctx,(uint32_t)x,(uint32_t)y,(uint32_t)arg);
  if(runtime_skip_write)return TINYRT_OK;
  int32_t old=r->host.kv_get(r->host.ctx,0,0);
@@ -65,3 +68,17 @@ size_t tinyrt_runtime_memory_used(void) {return runtime_live?256:0;}
 size_t tinyrt_runtime_memory_peak(void) {return 256;}
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r) {(void)r;return "test guest failure";}
 void tinyrt_runtime_destroy(tinyrt_runtime_t *r) {if(r){runtime_destroy_count++;runtime_live=0;free(r);}}
+
+int cache_fail_alloc;
+unsigned cache_live_allocations;
+static void *tracked_cache;
+void *manager_test_malloc(size_t size) {
+ if(size==262144 && cache_fail_alloc)return NULL;
+ void *p=malloc(size);
+ if(size==262144 && p){tracked_cache=p;++cache_live_allocations;}
+ return p;
+}
+void manager_test_free(void *p) {
+ if(p && p==tracked_cache){tracked_cache=NULL;--cache_live_allocations;}
+ free(p);
+}

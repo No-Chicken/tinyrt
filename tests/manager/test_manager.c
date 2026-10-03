@@ -24,12 +24,22 @@ extern int metadata_cover;
 extern int metadata_audio;
 extern int runtime_audio;
 extern unsigned runtime_aot_creates;
+extern int cache_fail_alloc;
+extern unsigned cache_live_allocations;
+static int cache_fail_read;
+static tinyrt_store_io_t underlying_io;
+static tinyrt_status_t counted_read(void *ctx,uint32_t off,void *bytes,uint32_t size) {
+ if(cache_fail_read && cache_live_allocations)return TINYRT_IO_ERROR;
+ return underlying_io.read(ctx,off,bytes,size);
+}
+extern int runtime_resource;
+extern uint8_t runtime_resource_bytes[4096];
 static tinyrt_status_t load(void*c,const char*id,uint32_t*m,int32_t v[16]) {(void)c;(void)id;*m=kv_mask;memcpy(v,kv_values,sizeof(kv_values));return TINYRT_OK;}
 static tinyrt_status_t save(void*c,const char*id,uint32_t m,const int32_t v[16]) {(void)c;(void)id;if(fail_save)return TINYRT_IO_ERROR;kv_mask=m;memcpy(kv_values,v,sizeof(kv_values));saves++;return TINYRT_OK;}
 static tinyrt_status_t clear(void*c,const char*id) {(void)c;(void)id;if(fail_clear)return TINYRT_IO_ERROR;kv_mask=0;memset(kv_values,0,sizeof(kv_values));clears++;return TINYRT_OK;}
 static uint32_t now(void*c){(void)c;return clock_ms;}
 static tinyrt_manager_t *open_manager(void) {
- tinyrt_store_io_t io=fake_nor_io(&nor);static tinyrt_package_verifier_t verifier={0};
+ tinyrt_store_io_t io=fake_nor_io(&nor);underlying_io=io;io.read=counted_read;static tinyrt_package_verifier_t verifier={0};
  static tinyrt_package_aot_profile_t profile={true,false,5,"x86_64","",{1}};verifier.aot_profile=&profile;
  tinyrt_manager_storage_t storage={NULL,load,save,clear,now};tinyrt_manager_t*m=NULL;
  CHECK(tinyrt_manager_open(&io,&verifier,&storage,&m)==TINYRT_OK&&m);return m;
@@ -232,7 +242,74 @@ static void test_output_ownership(void) {
  CHECK(!memcmp(&front,&snapshot,sizeof(front)));
  saves=0;clears=0;runtime_destroy_count=0;clock_ms=42;
 }
+static void test_resource_cache(void) {
+ static uint8_t large[262144+4096+44];
+ fake_nor_init(&nor);metadata_audio=1;runtime_resource=1;
+ tinyrt_manager_t *m=open_manager();tinyrt_app_info_t a;
+ test_package_make(large,sizeof(large),"resources",1,13,&a);
+ CHECK(tinyrt_manager_begin(m,&a)==TINYRT_OK);
+ for(uint32_t off=0;off<sizeof(large);) {
+  uint32_t n=(uint32_t)sizeof(large)-off;if(n>4096)n=4096;
+  CHECK(tinyrt_manager_write(m,large+off,n)==TINYRT_OK);off+=n;
+ }
+ CHECK(tinyrt_manager_finish(m)==TINYRT_OK);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ unsigned reads=nor.reads;
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_OK&&nor.reads==reads);
+ for(unsigned i=0;i<500;++i) {
+  CHECK(tinyrt_manager_event(m,1,64,512,0,&frame)==TINYRT_OK);
+  CHECK(!memcmp(runtime_resource_bytes,large+44+64,512));
+ }
+ printf("RESOURCE_CACHE repeated_reads=500 storage_reads=%u\n",nor.reads-reads);
+ CHECK(nor.reads==reads&&cache_live_allocations==1);
+ CHECK(tinyrt_manager_event(m,1,262143,1,0,&frame)==TINYRT_OK);
+ CHECK(runtime_resource_bytes[0]==large[44+262143]&&nor.reads==reads);
+ CHECK(tinyrt_manager_event(m,1,262143,2,0,&frame)==TINYRT_OK);
+ CHECK(!memcmp(runtime_resource_bytes,large+44+262143,2)&&nor.reads==reads+1);
+ CHECK(tinyrt_manager_event(m,1,262144,4096,0,&frame)==TINYRT_OK);
+ CHECK(!memcmp(runtime_resource_bytes,large+44+262144,4096)&&nor.reads==reads+2);
+ CHECK(tinyrt_manager_event(m,1,266240,1,0,&frame)==TINYRT_INVALID_ARGUMENT);
+ CHECK(nor.reads==reads+2&&cache_live_allocations==0);
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_NOT_FOUND);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ nor.fail_read=1;
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_OK&&runtime_resource_bytes[0]==13);
+ CHECK(tinyrt_manager_event(m,1,262144,1,0,&frame)==TINYRT_IO_ERROR);
+ nor.fail_read=0;
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,-1,1,0,&frame)==TINYRT_INVALID_ARGUMENT);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,0,4097,0,&frame)==TINYRT_INVALID_ARGUMENT);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
+ CHECK(cache_live_allocations==0);
+ cache_fail_alloc=1;
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ reads=nor.reads;
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_OK&&runtime_resource_bytes[0]==13);
+ CHECK(nor.reads==reads+1&&cache_live_allocations==0);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK);cache_fail_alloc=0;
+ cache_fail_read=1;
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_IO_ERROR);
+ CHECK(cache_live_allocations==0);
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_NOT_FOUND);
+ cache_fail_read=0;
+ tinyrt_app_info_t b;
+ test_package_make(package,sizeof(package),"other",1,29,&b);
+ CHECK(tinyrt_manager_begin(m,&b)==TINYRT_OK);
+ CHECK(tinyrt_manager_write(m,package,sizeof(package))==TINYRT_OK);
+ CHECK(tinyrt_manager_finish(m)==TINYRT_OK);
+ CHECK(tinyrt_manager_start(m,&b.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_OK&&runtime_resource_bytes[0]==29);
+ CHECK(tinyrt_manager_event(m,1,356,1,0,&frame)==TINYRT_INVALID_ARGUMENT);
+ tinyrt_manager_close(m);m=open_manager();
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,0,1,0,&frame)==TINYRT_OK&&runtime_resource_bytes[0]==13);
+ tinyrt_manager_close(m);metadata_audio=0;runtime_resource=0;
+ saves=clears=runtime_destroy_count=0;kv_mask=0;
+}
 int main(void) {
+ test_resource_cache();
  test_output_ownership();
  test_skipped_frame_and_clock();
  test_large_catalog();

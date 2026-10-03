@@ -11,3 +11,7 @@ else()
  target_compile_options(test_manager PRIVATE -Wall -Wextra -Werror)
 endif()
 add_test(NAME manager COMMAND test_manager)
+
+# Fault injection is confined to the manager translation unit in this test.
+set_source_files_properties(../../runtime/manager/tinyrt_manager.c PROPERTIES
+ COMPILE_DEFINITIONS "malloc=manager_test_malloc;free=manager_test_free")

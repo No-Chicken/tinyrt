@@ -18,7 +18,7 @@ offset32..151 的字段如下表；字符串 NUL 终止，NUL 后全零。offset
 | 偏移 | 字段 |
 |---|---|
 | 32、36 | u32 app_version>0、abi_version=1 |
-| 40 | u32 permissions，draw=1、input=2、storage=4、clock=8，其他位为零 |
+| 40 | u32 permissions，draw=1、input=2、storage=4、clock=8、audio=16，其他位为零 |
 | 44、48 | u32 memory_pages=1..16、instruction_budget=1..100000 |
 | 52 | u32 key_id，唯一匹配 Host 信任记录 |
 | 56 | app_id[32]，1..31 字节 ASCII `[a-z0-9._-]` |

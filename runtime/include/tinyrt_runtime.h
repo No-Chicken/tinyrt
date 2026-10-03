@@ -7,6 +7,8 @@ extern "C" {
 #define TINYRT_FRAME_MAX_COMMANDS 128u
 #define TINYRT_TEXT_MAX_BYTES 63u
 #define TINYRT_FRAME_MAX_PIXEL_BYTES (256u * 240u * 2u)
+#define TINYRT_AUDIO_MAX_BYTES 32000u
+#define TINYRT_AUDIO_SAMPLE_RATE 16000u
 #define TINYRT_DEFAULT_CLOCK_INTERVAL_MS 100u
 #define TINYRT_RUNTIME_HEAP_LIMIT (2u * 1024u * 1024u)
 typedef struct tinyrt_runtime tinyrt_runtime_t;
@@ -49,6 +51,9 @@ typedef struct {
     /* Current verified package resources only. At most 4096 bytes per call;
      * no directory lookup, mutation, or unrelated package access. */
     tinyrt_status_t (*asset_read)(void *,uint32_t offset,void *,uint32_t length);
+    /* Must validate the current resource range and own any queued copy.
+     * BUSY means dropped/unavailable without poisoning the guest. */
+    tinyrt_status_t (*audio_play)(void *,uint32_t offset,uint32_t length,uint32_t sample_rate);
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

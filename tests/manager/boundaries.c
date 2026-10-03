@@ -12,6 +12,8 @@ int runtime_skip_frame;
 int metadata_swap;
 int metadata_aot;
 int metadata_cover;
+int metadata_audio;
+int runtime_audio;
 unsigned runtime_aot_creates;
 static int runtime_live;
 struct tinyrt_runtime {tinyrt_runtime_host_t host;};
@@ -23,6 +25,7 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,const 
  (void)v;memset(m,0,sizeof(*m));tinyrt_status_t r=test_package_verify(NULL,io,o,n,&m->app);
  if(metadata_cover){m->cover.offset=44;m->cover.size=n-44;m->cover.codec=1;memset(m->cover.sha256,13,32);}
  m->wasm_offset=0;m->wasm_size=n;m->policy=(tinyrt_package_policy_t){1,15,1,1000};
+ if(metadata_audio){m->assets_offset=44;m->assets_size=n-44;m->policy.permissions=31;}
  m->execution_kind=metadata_aot?TINYRT_PACKAGE_EXEC_AOT:TINYRT_PACKAGE_EXEC_WASM;
  m->aot_offset=44;m->aot_size=n-44;
  memcpy(m->title,"Counter",8);if(metadata_swap) memcpy(m->app.id.app_id,"foreign",8);return r;
@@ -45,6 +48,7 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r) {
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,int32_t y,int32_t arg) {
  (void)kind;(void)x;(void)y;(void)arg;
+ if(runtime_audio)return r->host.audio_play(r->host.ctx,(uint32_t)x,(uint32_t)y,(uint32_t)arg);
  if(runtime_skip_write)return TINYRT_OK;
  int32_t old=r->host.kv_get(r->host.ctx,0,0);
  tinyrt_status_t s=r->host.kv_set(r->host.ctx,0,old+1);

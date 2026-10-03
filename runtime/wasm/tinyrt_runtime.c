@@ -106,7 +106,7 @@ struct tinyrt_runtime {
     tinyrt_execution_guard_t guard;
     tinyrt_frame_t *frame;
     int32_t width, height;
-    uint32_t clock_interval_ms, callback, input_events;
+    uint32_t clock_interval_ms, callback, input_events, audio_requests;
     bool ready, failed, stopped, skipped, aot;
     char error[192];
 };
@@ -296,6 +296,21 @@ static int32_t asset_read(wasm_exec_env_t e,uint32_t offset,uint32_t ptr,uint32_
     if (!p || r->host.asset_read(r->host.ctx,offset,p,len)!=TINYRT_OK) return fail(r,"resource read out of bounds or failed");
     return (int32_t)len;
 }
+static int32_t audio_play(wasm_exec_env_t e,uint32_t offset,uint32_t length,uint32_t rate)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_AUDIO)) return -1;
+    if (r->callback>1 || !length || (length&1u) || length>TINYRT_AUDIO_MAX_BYTES ||
+        rate!=TINYRT_AUDIO_SAMPLE_RATE || offset>UINT32_MAX-length)
+        return fail(r,"audio callback, range or format invalid");
+    if (r->audio_requests>=4) return 1;
+    ++r->audio_requests;
+    if (!r->host.audio_play) return 1;
+    tinyrt_status_t result=r->host.audio_play(r->host.ctx,offset,length,rate);
+    if (result==TINYRT_BUSY) return 1;
+    if (result!=TINYRT_OK) return fail(r,"audio resource range or host failed");
+    return 0;
+}
 static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
 {
     tinyrt_runtime_t *r=context(e);
@@ -338,6 +353,7 @@ static uint32_t now_ms(wasm_exec_env_t e)
 static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 : 0; }
 static NativeSymbol natives[] = {
     { "asset_read", (void *)asset_read, "(iii)i", NULL },
+    { "audio_play", (void *)audio_play, "(iii)i", NULL },
     { "clock_interval", (void *)clock_interval, "(i)i", NULL },
     { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
@@ -354,8 +370,8 @@ static NativeSymbol natives[] = {
     { "now_ms", (void *)now_ms, "()i", NULL },
     { "runtime_backend", (void *)runtime_backend, "()i", NULL }
 };
-static const unsigned arity[] = { 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 1, 2, 2, 0, 0 };
-static const uint32_t required_permission[] = { 0, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
+static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 1, 2, 2, 0, 0 };
+static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -407,7 +423,7 @@ static bool u32(reader_t *r, uint32_t *out)
 }
 static bool policy_valid(const tinyrt_package_policy_t *p)
 {
-    return p && p->abi_version == 1 && !(p->permissions & ~15u)
+    return p && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
         && p->max_memory_pages >= 1 && p->max_memory_pages <= 16
         && p->instruction_budget >= 1 && p->instruction_budget <= 100000;
 }
@@ -733,6 +749,7 @@ static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t a
     }
     if(!r->aot)wasm_runtime_set_instruction_count_limit(r->env, r->policy.instruction_budget);
     r->callback=function;
+    r->audio_requests=0;
     bool ok = wasm_runtime_call_wasm(r->env, r->functions[function], argc, argv);
     if (r->guard.disarm) r->guard.disarm(r->guard.ctx);
     r->callback=UINT32_MAX;

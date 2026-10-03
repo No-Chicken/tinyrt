@@ -8,6 +8,10 @@
 #endif
 /* Read current package resources in init/event; <=4096 bytes per call. Returns length or -1. */
 TINYRT_IMPORT(asset_read) int32_t asset_read(uint32_t offset,void *destination,uint32_t length);
+/* AUDIO=16; init/event only. Current signed resources, PCM16 LE mono, 16000 Hz,
+ * even length 2..32000. At most 4 requests/callback. Host copies;
+ * 0 queued, 1 busy/unavailable/request limit. */
+TINYRT_IMPORT(audio_play) int32_t audio_play(uint32_t resource_offset,uint32_t byte_length,uint32_t sample_rate);
 TINYRT_IMPORT(clock_interval) int32_t clock_interval(int32_t ms);
 TINYRT_IMPORT(draw_arc) int32_t draw_arc(int32_t cx,int32_t cy,int32_t radius,int32_t thickness,int32_t start_deg,int32_t end_deg,uint32_t rgb);
 TINYRT_IMPORT(draw_clear) int32_t draw_clear(uint32_t rgb);

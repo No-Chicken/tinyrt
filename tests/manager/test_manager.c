@@ -21,6 +21,8 @@ extern int runtime_skip_frame;
 extern int metadata_swap;
 extern int metadata_aot;
 extern int metadata_cover;
+extern int metadata_audio;
+extern int runtime_audio;
 extern unsigned runtime_aot_creates;
 static tinyrt_status_t load(void*c,const char*id,uint32_t*m,int32_t v[16]) {(void)c;(void)id;*m=kv_mask;memcpy(v,kv_values,sizeof(kv_values));return TINYRT_OK;}
 static tinyrt_status_t save(void*c,const char*id,uint32_t m,const int32_t v[16]) {(void)c;(void)id;if(fail_save)return TINYRT_IO_ERROR;kv_mask=m;memcpy(kv_values,v,sizeof(kv_values));saves++;return TINYRT_OK;}
@@ -39,6 +41,30 @@ static tinyrt_app_info_t install(tinyrt_manager_t*m,uint32_t version) {
  CHECK(tinyrt_manager_begin(m,&a)==TINYRT_OK);
  CHECK(tinyrt_manager_write(m,package,sizeof(package))==TINYRT_OK);
  CHECK(tinyrt_manager_finish(m)==TINYRT_OK);return a;
+}
+static unsigned audio_plays,audio_stops;
+static tinyrt_status_t audio_play(void *ctx,const void *bytes,uint32_t length,uint32_t rate) {
+ (void)ctx;CHECK(length==356 && rate==16000);CHECK(((const uint8_t *)bytes)[0]==13);
+ ++audio_plays;return TINYRT_OK;
+}
+static void audio_stop(void *ctx){(void)ctx;++audio_stops;}
+static void test_audio_resource_scope_and_stop(void) {
+ fake_nor_init(&nor);metadata_audio=1;runtime_audio=1;tinyrt_manager_t*m=open_manager();
+ tinyrt_manager_audio_t adapter={NULL,audio_play,audio_stop};
+ CHECK(tinyrt_manager_set_audio(m,&adapter)==TINYRT_OK);
+ tinyrt_app_info_t a=install(m,1);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_set_audio(m,NULL)==TINYRT_BUSY);
+ CHECK(tinyrt_manager_event(m,1,0,356,16000,&frame)==TINYRT_OK && audio_plays==1);
+ CHECK(tinyrt_manager_event(m,1,355,2,16000,&frame)==TINYRT_INVALID_ARGUMENT);
+ CHECK(audio_plays==1 && audio_stops==1);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,-1,2,16000,&frame)==TINYRT_INVALID_ARGUMENT);
+ CHECK(audio_plays==1 && audio_stops==2);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK && audio_stops==3);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK && audio_stops==3);
+ tinyrt_manager_close(m);metadata_audio=0;runtime_audio=0;
 }
 static void test_cover_ranges_and_identity(void) {
  fake_nor_init(&nor);tinyrt_manager_t*m=open_manager();tinyrt_app_info_t a=install(m,1);
@@ -247,6 +273,7 @@ int main(void) {
  CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_VERIFY_FAILED&&count==0);metadata_swap=0;
  tinyrt_manager_close(m);m=open_manager();tinyrt_app_info_t out;
  CHECK(tinyrt_manager_query(m,&b.id,&out)==TINYRT_OK);tinyrt_manager_close(m);
+ test_audio_resource_scope_and_stop();
  test_cover_ranges_and_identity();
  test_aot_selection();
  printf("MANAGER_TESTS checks=%u PASS (real NOR/store, explicit runtime/crypto boundaries)\n",checks);return 0;

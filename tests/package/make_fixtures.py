@@ -54,7 +54,7 @@ def fixtures(folder):
         ("total_size",12,len(good)+1), ("wasm_offset",16,255), ("wasm_tiny",20,8),
         ("wasm_overflow",20,0xffffffff), ("assets_offset",24,0xffffffff),
         ("assets_overflow",28,0xffffffff), ("version_zero",32,0), ("abi",36,2),
-        ("permissions",40,16), ("memory_zero",44,0), ("memory_high",44,17),
+        ("permissions",40,32), ("memory_zero",44,0), ("memory_high",44,17),
         ("budget_zero",48,0), ("budget_high",48,100001), ("key_unknown",52,8)]:
         u32(name,offset,value)
     for name,offset,value in [

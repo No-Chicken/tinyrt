@@ -27,6 +27,11 @@ static tinyrt_status_t read_resource(void *ctx,uint32_t off,void *out,uint32_t l
     if(length)memcpy(out,resources+off,length);
     return TINYRT_OK;
 }
+/* Desktop preview validates audio resource ranges but intentionally stays silent. */
+static tinyrt_status_t play_audio(void *ctx,uint32_t offset,uint32_t length,uint32_t rate) {
+    (void)ctx;(void)rate;
+    return offset>resources_size || length>resources_size-offset ? TINYRT_INVALID_ARGUMENT : TINYRT_OK;
+}
 static double milliseconds(void) {
 #ifdef _WIN32
     LARGE_INTEGER n, f; QueryPerformanceCounter(&n); QueryPerformanceFrequency(&f);
@@ -127,7 +132,7 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
     return result;
 }
 static int usage(void) {
-    fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..15] [--assets resources.bin]\n"
+    fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..31] [--assets resources.bin]\n"
         "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1>\n"
         "       time <uint32_ms> | tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
         "advance uses the guest clock interval and monotonic virtual time; capture does not run callbacks.\n"
@@ -152,7 +157,7 @@ int main(int argc, char **argv) {
         if (i+1>=argc || !parse_u32(argv[i+1],&value)) return usage();
         if (!strcmp(argv[i],"--pages") && value>=1 && value<=16) policy.max_memory_pages=value;
         else if (!strcmp(argv[i],"--budget") && value>=1 && value<=100000) policy.instruction_budget=value;
-        else if (!strcmp(argv[i],"--permissions") && value<=15) policy.permissions=value;
+        else if (!strcmp(argv[i],"--permissions") && value<=31) policy.permissions=value;
         else return usage();
     }
     FILE *f=fopen(argv[1],"rb");
@@ -166,7 +171,7 @@ int main(int argc, char **argv) {
     if (count!=(size_t)length || close_result) { free(bytes); return 2; }
     int exit_code=0;
     if (tinyrt_runtime_system_init()!=TINYRT_OK) { free(bytes); return 1; }
-    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource};
+    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio};
     tinyrt_runtime_t *rt=NULL;
     tinyrt_status_t result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
     if (result!=TINYRT_OK) { emit("create",result,"Wasm load rejected",0); exit_code=1; goto done; }

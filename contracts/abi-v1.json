@@ -8,6 +8,11 @@
       "permission": 0
     },
     {
+      "name": "audio_play",
+      "signature": "(iii)i",
+      "permission": 16
+    },
+    {
       "name": "clock_interval",
       "signature": "(i)i",
       "permission": 8
@@ -175,5 +180,18 @@
     ],
     "scope": "current authenticated package only",
     "permission": 0
+  },
+  "audio": {
+    "format": "PCM16 little-endian mono",
+    "sample_rate": 16000,
+    "max_bytes": 32000,
+    "stages": [
+      "init",
+      "event"
+    ],
+    "permission": 16,
+    "results": "0 queued, 1 busy/unavailable; invalid arguments fail callback",
+    "scope": "current authenticated package resources; host owns playback copies",
+    "max_requests_per_callback": 4
   }
 }

@@ -7,6 +7,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class ContractTests(unittest.TestCase):
+    def test_bounded_audio_contract(self):
+        spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
+        self.assertIn({'name':'audio_play','signature':'(iii)i','permission':16},spec['imports'])
+        self.assertEqual(spec['audio']['max_bytes'],32000)
+        self.assertEqual(spec['audio']['sample_rate'],16000)
+        self.assertEqual(spec['audio']['stages'],['init','event'])
+
     def test_authoritative_contract_is_present(self):
         self.assertTrue((ROOT / "contracts/abi-v1.json").is_file(), "core must own ABI v1 contract")
 

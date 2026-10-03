@@ -10,6 +10,14 @@ typedef struct {
     tinyrt_status_t (*clear)(void *,const char *);
     uint32_t (*now_ms)(void *);
 } tinyrt_manager_storage_t;
+/* Adapter copies PCM before returning; stop discards queued/in-progress audio.
+ * Adapter context outlives manager; callbacks never retain manager pointers. */
+typedef struct {
+    void *ctx;
+    tinyrt_status_t (*play)(void *,const void *,uint32_t length,uint32_t sample_rate);
+    void (*stop)(void *);
+} tinyrt_manager_audio_t;
+tinyrt_status_t tinyrt_manager_set_audio(tinyrt_manager_t *,const tinyrt_manager_audio_t *);
 /* Synchronous single-owner engine. Runtime system must already be initialized
  * on this owner thread; close manager before shutting down the runtime. */
 tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *,const tinyrt_package_verifier_t *,const tinyrt_manager_storage_t *,tinyrt_manager_t **);

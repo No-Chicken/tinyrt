@@ -12,6 +12,8 @@ struct tinyrt_manager {
     uint32_t received;
     tinyrt_runtime_t *runtime;
     tinyrt_execution_guard_t guard;
+    tinyrt_manager_audio_t audio;
+    uint8_t *audio_buffer;
     tinyrt_app_info_t running;
     uint32_t resource_offset,resource_size;
     uint32_t mask;
@@ -71,6 +73,8 @@ tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *io, const tinyrt_pa
 static void destroy_runtime(tinyrt_manager_t *m) {
     if (!m)
         return;
+    if (m->runtime && m->audio.stop) m->audio.stop(m->audio.ctx);
+    free(m->audio_buffer);m->audio_buffer=NULL;
     tinyrt_runtime_destroy(m->runtime);
     m->runtime = NULL;
     memset(&m->running, 0, sizeof(m->running));
@@ -86,6 +90,13 @@ tinyrt_status_t tinyrt_manager_set_execution_guard(tinyrt_manager_t *m, const ti
                   guard->timeout_ms > TINYRT_CALLBACK_TIMEOUT_MAX_MS)) return TINYRT_INVALID_ARGUMENT;
     if (guard) m->guard = *guard;
     else memset(&m->guard, 0, sizeof(m->guard));
+    return TINYRT_OK;
+}
+tinyrt_status_t tinyrt_manager_set_audio(tinyrt_manager_t *m,const tinyrt_manager_audio_t *audio) {
+    if (!m || (audio && (!audio->play || !audio->stop))) return TINYRT_INVALID_ARGUMENT;
+    if (m->runtime) return TINYRT_BUSY;
+    if(audio)m->audio=*audio;
+    else memset(&m->audio,0,sizeof(m->audio));
     return TINYRT_OK;
 }
 static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
@@ -355,6 +366,15 @@ static tinyrt_status_t host_resource(void *ctx,uint32_t off,void *bytes,uint32_t
     if (!length) return TINYRT_OK;
     return tinyrt_store_read(m->store,&m->running.id,m->resource_offset+off,bytes,length);
 }
+static tinyrt_status_t host_audio(void *ctx,uint32_t off,uint32_t length,uint32_t rate) {
+    tinyrt_manager_t *m=ctx;
+    if (!length || length>TINYRT_AUDIO_MAX_BYTES || (length&1u) || rate!=TINYRT_AUDIO_SAMPLE_RATE ||
+        off>m->resource_size || length>m->resource_size-off) return TINYRT_INVALID_ARGUMENT;
+    if (!m->audio.play || !m->audio_buffer) return TINYRT_BUSY;
+    tinyrt_status_t result=tinyrt_store_read(m->store,&m->running.id,m->resource_offset+off,m->audio_buffer,length);
+    if(result!=TINYRT_OK)return result;
+    return m->audio.play(m->audio.ctx,m->audio_buffer,length,rate);
+}
 static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     const char *detail = m->runtime ? tinyrt_runtime_last_error(m->runtime) : NULL;
     snprintf(m->error, sizeof(m->error), "%s (status=%d)", detail && *detail ? detail : "application failed",
@@ -417,7 +437,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {
@@ -433,6 +453,10 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
         if (r != TINYRT_OK) return fail_runtime(m, r);
     }
     m->running = a;
+    if ((meta.policy.permissions&TINYRT_PERMISSION_AUDIO) && m->audio.play) {
+        m->audio_buffer=malloc(TINYRT_AUDIO_MAX_BYTES);
+        if(!m->audio_buffer)return fail_runtime(m,TINYRT_NO_MEMORY);
+    }
     r = m->storage.load(m->storage.ctx, a.id.app_id, &m->mask, m->values);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);

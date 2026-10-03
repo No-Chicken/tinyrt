@@ -5,6 +5,18 @@ ROOT=Path(__file__).resolve().parents[2]
 RUNNER=Path(os.environ.get('TINYRT_RUNNER',str(ROOT/'build/tinyrt-run.exe')))
 FIXTURES=Path(os.environ.get('TINYRT_FIXTURE_DIR',str(ROOT/'tests/runtime/fixtures')))
 class Runner(unittest.TestCase):
+    def test_motion_opt_in_and_signed_range(self):
+        guest=self.event_guest('motion_opt_in',128)
+        p,r=self.run_guest(guest,'motion -700 0 1000\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual(r[1]['phase'],'motion')
+        self.assertEqual(r[1]['frame'][0]['rgb'],263)
+        guest=self.event_guest('motion_unsubscribed',120)
+        p,r=self.run_guest(guest,'motion 700 0 1000\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertNotIn('motion',[item['phase'] for item in r])
+        p,r=self.run_guest(guest,'motion 16001 0 0\n')
+        self.assertNotEqual(p.returncode,0)
     def event_guest(self, name, input_mask=None):
         sys.path.insert(0,str(ROOT/'tests/runtime'))
         from make_fixtures import c,call

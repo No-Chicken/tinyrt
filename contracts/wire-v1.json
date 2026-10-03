@@ -47,6 +47,7 @@
       "TINYRT_CAP_PACKAGE_SECTIONS": 64,
       "TINYRT_OP_APP_COVER": 28,
       "TINYRT_OP_MOBILE_STATUS": 29,
+      "TINYRT_OP_GET_DEVICE_INFO": 30,
       "TINYRT_CAP_COVER_MOBILE_CONFIRM": 128
     }
   },
@@ -111,6 +112,29 @@
     "header_size": 10,
     "frame_size": 20,
     "max_message": 256,
+    "device_info": {
+      "opcode": 30,
+      "request_size": 0,
+      "request": "empty",
+      "schema_version": 1,
+      "response_encoding": "UTF-8 JSON object",
+      "response_max_bytes": 254,
+      "response": {
+        "schema": { "type": "integer", "value": 1 },
+        "firmware": { "type": "string", "semantics": "Version from the running firmware application descriptor." },
+        "tinyrt": { "type": "string", "semantics": "TinyRT VERSION bound to the firmware build." },
+        "sdk": { "type": "string", "semantics": "SDK VERSION bound to the firmware build, not the querying host SDK." },
+        "esp_idf": { "type": "string", "semantics": "Linked ESP-IDF version." },
+        "lvgl": { "type": "string", "semantics": "Linked LVGL major.minor.patch version." },
+        "build": { "type": "string", "pattern": "^[0-9a-f]{16}$", "semantics": "First eight bytes of the running firmware ELF SHA-256, encoded as 16 lowercase hexadecimal characters; a build fingerprint, not a signature." },
+        "transports": { "type": "array", "items_type": "string", "value": ["ble", "usb"] }
+      },
+      "old_host": {
+        "response": "nonzero management status; no device-info JSON",
+        "client_behavior": "RemoteError; no fabricated versions or automatic upgrade"
+      },
+      "semantics": "Read-only and allowed during transfer. BLE requires the existing authenticated owner bond. The response bound excludes the management status u16, so status plus JSON fits the unchanged 256-byte message limit. Empty or truncated JSON is never returned as success; nonempty requests are rejected. Hosts predating this opcode return the ordinary unknown-opcode error status. USB INFO=7 exposes the same JSON with an err:u32 prefix in a separate EEOT response."
+    },
     "quarantine": {
       "hello_capability_bit": 8,
       "opcode": 23,

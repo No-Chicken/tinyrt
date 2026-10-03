@@ -2,6 +2,13 @@
 
 The store spans `0x4E0000` bytes (4992 KiB). Offsets 0 and 4096 contain two
 directory sectors. The remaining 4984 KiB stores immutable signed packages.
+
+The maximum individual package remains 2 MiB. Updates require a separate free
+extent while the current package stays committed. This capacity can stage a
+second 2 MiB package alongside an installed 2 MiB package, leaving 888 KiB for
+other allocations. Other packages and fragmentation can still prevent a large
+update; `TINYRT_NO_SPACE` leaves the committed package intact. Applications must
+budget a contiguous staging extent when choosing package sizes.
 There are at most 16 committed app IDs, including quarantined entries. A
 complete package is at most `0x200000` bytes; guest memory and callback budgets
 are unchanged.

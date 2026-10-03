@@ -236,7 +236,7 @@ static void test_full_store_and_fragmented_staging(void) {
  CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==0&&stats.largest_free_bytes==0);
  CHECK(stats.allocated_bytes==0x4DE000&&stats.package_bytes==stats.allocated_bytes);
  tinyrt_app_info_t next,out;tinyrt_install_t *h=NULL;
- test_package_make(pkg,0x100000,"a",2,31,&next);
+ test_package_make(pkg,0x180000,"a",2,31,&next);
  unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_NO_SPACE && !h);
  CHECK(nor.mutations==mutations && tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
  CHECK(tinyrt_store_uninstall(s,"b")==TINYRT_OK && tinyrt_store_uninstall(s,"d")==TINYRT_OK);
@@ -253,7 +253,7 @@ static void test_full_store_and_fragmented_staging(void) {
  tinyrt_store_abort(h);CHECK(committed_offset("a")==0x102000);
  tinyrt_store_close(s);
 }
-static void test_two_maximum_packages_and_erase_failure(void) {
+static void test_maximum_package_staging_capacity_and_erase_failure(void) {
  fake_nor_init(&nor);tinyrt_store_t*s=NULL;CHECK(open_store(&s)==TINYRT_OK);
  tinyrt_app_info_t a=install_package(s,"large.a",1,0x200000);
  (void)install_package(s,"large.b",1,0x200000);
@@ -263,10 +263,16 @@ static void test_two_maximum_packages_and_erase_failure(void) {
  unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_NO_SPACE && !h);
  CHECK(nor.mutations==mutations && tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
  CHECK(tinyrt_store_uninstall(s,"large.b")==TINYRT_OK);
- fake_nor_reset_log(&nor);nor.fail_at=512;nor.partial_bytes=2048;nor.stay_on_after_failure=1;
+ /* A second 2 MiB extent fits while the old package stays committed. A
+  * partially failed staging erase must leave that old package usable. */
+ tinyrt_store_stats_t stats;
+ CHECK(tinyrt_store_stats(s,&stats)==TINYRT_OK&&stats.free_bytes==0x2DE000&&stats.largest_free_bytes==0x2DE000);
+ fake_nor_reset_log(&nor);nor.fail_at=256;nor.partial_bytes=2048;nor.stay_on_after_failure=1;
  CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_IO_ERROR && !h);
  CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_recheck(s,&a.id)==TINYRT_OK);
  fake_nor_reset_log(&nor);CHECK(tinyrt_store_begin(s,&next,&h)==TINYRT_OK);
+ CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
  CHECK(tinyrt_store_write(h,0,pkg,0x200000)==TINYRT_OK);
  CHECK(tinyrt_store_commit(h)==TINYRT_OK);tinyrt_store_abort(h);
  CHECK(tinyrt_store_query(s,&next.id,&out)==TINYRT_OK);tinyrt_store_close(s);
@@ -610,7 +616,7 @@ static void test_read_identity_and_install_exclusion(void) {
 int main(void) {
     RUN(test_sixteen_independent_apps);
     RUN(test_extent_first_fit_and_quarantine);RUN(test_full_store_and_fragmented_staging);
-    RUN(test_two_maximum_packages_and_erase_failure);RUN(test_v2_structural_bounds_and_legacy_refusal);
+    RUN(test_maximum_package_staging_capacity_and_erase_failure);RUN(test_v2_structural_bounds_and_legacy_refusal);
     RUN(test_inventory_revision);RUN(test_storage_stats_failures_and_staging);
     RUN(test_quarantine_keeps_newest_directory); RUN(test_quarantine_does_not_rollback_version);
     RUN(test_resource_failure_is_not_quarantine);

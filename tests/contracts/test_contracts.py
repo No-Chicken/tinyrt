@@ -58,6 +58,25 @@ class ContractTests(unittest.TestCase):
                 self.assertIsNotNone(found, name)
                 self.assertEqual(int(found.group(1), 0), expected, name)
 
+    def test_device_info_schema_and_response_bound(self):
+        spec = json.loads((ROOT / "contracts/wire-v1.json").read_text(encoding="utf-8"))
+        info = spec["management"]["device_info"]
+        self.assertEqual(spec["headers"]["protocol/tinyrt_transport.h"]["TINYRT_OP_GET_DEVICE_INFO"], 30)
+        self.assertEqual((info["opcode"], info["request_size"], info["request"],
+                          info["schema_version"], info["response_encoding"]),
+                         (30, 0, "empty", 1, "UTF-8 JSON object"))
+        self.assertEqual(info["response_max_bytes"], 254)
+        self.assertEqual(info["response_max_bytes"] + 2, spec["management"]["max_message"])
+        fields = info["response"]
+        self.assertEqual(set(fields), {"schema", "firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build", "transports"})
+        self.assertEqual(fields["schema"], {"type": "integer", "value": 1})
+        for name in ("firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build"):
+            self.assertEqual(fields[name]["type"], "string", name)
+        self.assertEqual(fields["build"]["pattern"], "^[0-9a-f]{16}$")
+        self.assertEqual(fields["transports"], {"type": "array", "items_type": "string", "value": ["ble", "usb"]})
+        self.assertEqual(info["old_host"]["response"], "nonzero management status; no device-info JSON")
+        self.assertEqual(info["old_host"]["client_behavior"], "RemoteError; no fabricated versions or automatic upgrade")
+
     def test_paging_and_extent_contract_bounds(self):
         spec = json.loads((ROOT / "contracts/wire-v1.json").read_text(encoding="utf-8"))
         store = spec["store"]

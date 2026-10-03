@@ -4,6 +4,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define RESOURCE_CACHE_MAX_BYTES (256u * 1024u)
+
 struct tinyrt_manager {
     tinyrt_store_t *store;
     tinyrt_package_verifier_t verifier;
@@ -16,6 +18,8 @@ struct tinyrt_manager {
     uint8_t *audio_buffer;
     tinyrt_app_info_t running;
     uint32_t resource_offset,resource_size;
+    uint8_t *resource_cache;
+    uint32_t resource_cache_size;
     uint32_t mask;
     int32_t values[16];
     uint32_t durable_mask, last_save_ms;
@@ -77,6 +81,10 @@ static void destroy_runtime(tinyrt_manager_t *m) {
     free(m->audio_buffer);m->audio_buffer=NULL;
     tinyrt_runtime_destroy(m->runtime);
     m->runtime = NULL;
+    free(m->resource_cache);
+    m->resource_cache = NULL;
+    m->resource_cache_size = 0;
+    m->resource_offset = m->resource_size = 0;
     memset(&m->running, 0, sizeof(m->running));
     m->mask = 0;
     memset(m->values, 0, sizeof(m->values));
@@ -361,9 +369,14 @@ static uint32_t host_now(void *ctx) {
 }
 static tinyrt_status_t host_resource(void *ctx,uint32_t off,void *bytes,uint32_t length) {
     tinyrt_manager_t *m=ctx;
-    if (off>m->resource_size || length>m->resource_size-off || length>4096)
+    if ((!bytes && length) || off>m->resource_size || length>m->resource_size-off || length>4096)
         return TINYRT_INVALID_ARGUMENT;
     if (!length) return TINYRT_OK;
+    /* 本实例持有只读快照；安装或卸载会先停止实例，guest 资源读取错误会使其销毁。 */
+    if (off <= m->resource_cache_size && length <= m->resource_cache_size - off) {
+        memcpy(bytes, m->resource_cache + off, length);
+        return TINYRT_OK;
+    }
     return tinyrt_store_read(m->store,&m->running.id,m->resource_offset+off,bytes,length);
 }
 static tinyrt_status_t host_audio(void *ctx,uint32_t off,uint32_t length,uint32_t rate) {
@@ -462,6 +475,19 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
         return fail_runtime(m, r);
     m->durable_mask = m->mask;
     memcpy(m->durable_values, m->values, sizeof(m->values));
+    /* 缓存仅属于本次已认证实例；先满足运行时必需分配，再尝试可选缓存。
+     * 前缀之外（如较大的音效）继续通过存储读取，不改变资源 ABI。 */
+    uint32_t cache_size = m->resource_size;
+    if (cache_size > RESOURCE_CACHE_MAX_BYTES) cache_size = RESOURCE_CACHE_MAX_BYTES;
+    if (cache_size) {
+        m->resource_cache = malloc(cache_size);
+        if (m->resource_cache) {
+            r = tinyrt_store_read(m->store, &m->running.id, m->resource_offset,
+                                  m->resource_cache, cache_size);
+            if (r != TINYRT_OK) return fail_runtime(m, r);
+            m->resource_cache_size = cache_size;
+        }
+    }
     r = tinyrt_runtime_init(m->runtime, width, height);
     if (r != TINYRT_OK)
         return fail_runtime(m, r);

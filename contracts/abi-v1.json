@@ -63,6 +63,61 @@
       "permission": 1
     },
     {
+      "name": "fb_config",
+      "signature": "(iii)i",
+      "permission": 1
+    },
+    {
+      "name": "fb_present",
+      "signature": "(iiiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_begin",
+      "signature": "(i)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_caps",
+      "signature": "()i",
+      "permission": 0
+    },
+    {
+      "name": "gfx_damage",
+      "signature": "(iiii)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_end",
+      "signature": "()i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_pal_upload",
+      "signature": "(iiii)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_submit",
+      "signature": "(ii)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_tex_free",
+      "signature": "(i)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_tex_update_rows",
+      "signature": "(iiiii)i",
+      "permission": 1
+    },
+    {
+      "name": "gfx_tex_upload",
+      "signature": "(iiiiiii)i",
+      "permission": 1
+    },
+    {
       "name": "input_events",
       "signature": "(i)i",
       "permission": 2
@@ -210,5 +265,24 @@
     "results": "0 queued, 1 busy/unavailable; invalid arguments fail callback",
     "scope": "current authenticated package resources; host owns playback copies",
     "max_requests_per_callback": 4
+  },
+  "raster": {
+    "record_encoding": "u16 little-endian op, u16 byte size, i32/u32 fields, inline payload padded to four bytes",
+    "max_submit_bytes": 16384,
+    "max_frame_bytes": 65536,
+    "max_records": 4096,
+    "textures": 32,
+    "palettes": 16,
+    "texture_bytes": 262144,
+    "capabilities": 8191,
+    "colors": "RGB565",
+    "resource_stages": [
+      "init",
+      "event"
+    ],
+    "batch_stages": [
+      "render"
+    ],
+    "atomic": "invalid record rejects complete render frame; prior display retained"
   }
 }

@@ -150,3 +150,18 @@ This extraction preserves the original source and notices without assigning a
 new project license. WAMR is obtained separately at a fixed revision and retains
 its upstream license. Test signing scalars 1, 2, 42 and 43 are public test fixtures;
 they must never be trusted by production devices. No production keys are stored.
+
+## Optional raster graphics (0.0.2)
+
+ABI 1 adds bounded batches, compact GRID, resident INDEX8/RGB565 textures and
+palettes, sprites with quarter-turn rotations, partial framebuffers, explicit
+damage, and CPU capability queries. Legacy graphics imports and package/AOT
+profiles stay compatible. The canonical guest header is
+[`contracts/guest-gfx-v1.h`](contracts/guest-gfx-v1.h). See the original
+[record, ownership and renderer contract](specs/graphics-raster-v1.md) for limits,
+frame recycling, snapshot quotas and partial-update backpressure. A separately
+bounded 1152KiB graphics pool is additional to the 2MiB tracked runtime heap;
+caller frame/display buffers are separate. The portable strip renderer has scalar
+reference comparisons. Desktop captures expose actual raster pixels plus legacy
+HUD overlays; font pixels remain host-specific. Hardware acceleration and S31
+performance are not validated by core host tests.

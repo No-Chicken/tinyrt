@@ -19,6 +19,8 @@ static uint64_t next_clock_deadline=UINT64_MAX;
 static tinyrt_frame_t frame;
 static uint32_t last_frame_count;
 static bool capture_pixels;
+static uint16_t raster_surface[466u*466u];
+static uint32_t raster_bytes;
 static uint8_t *resources;
 static uint32_t resources_size;
 static tinyrt_status_t read_resource(void *ctx,uint32_t off,void *out,uint32_t length) {
@@ -95,6 +97,10 @@ static void emit(const char *phase, tinyrt_status_t status, const char *error, d
     }
     printf("]");
     if(capture_pixels){printf(",\"pixels_hex\":\"");for(uint32_t i=0;i<pixel_bytes;++i)printf("%02x",frame.pixels[i]);putchar('"');}
+    if(capture_pixels && raster_bytes && frame.count && frame.commands[0].kind==TINYRT_DRAW_RASTER) {
+        printf(",\"raster_pixels_hex\":\"");
+        for(uint32_t i=0;i<466u*466u;i++)printf("%02x%02x",raster_surface[i]&255u,raster_surface[i]>>8);putchar('"');
+    }
     printf("}\n"); fflush(stdout);
 }
 static int parse_u32(const char *s, uint32_t *out) {
@@ -114,7 +120,13 @@ static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
                             int32_t kind, int32_t x, int32_t y, int32_t arg) {
     saved_t before=saved; double start=milliseconds();
     tinyrt_status_t result=init ? tinyrt_runtime_init(rt,x,y) : tinyrt_runtime_event(rt,kind,x,y,arg);
-    if (result==TINYRT_OK) result=tinyrt_runtime_render(rt,&frame);
+    if (result==TINYRT_OK) { tinyrt_frame_release(&frame); result=tinyrt_runtime_render(rt,&frame); }
+    if (result==TINYRT_OK && frame.count && frame.commands[0].kind==TINYRT_DRAW_RASTER) {
+        uint32_t count=frame.count;frame.count=1;
+        for(uint32_t strip_y=0;strip_y<466;strip_y+=32) { uint32_t rows=466-strip_y;if(rows>32)rows=32;
+            if(tinyrt_gfx_render_strip(&frame,raster_surface+strip_y*466,466,466,466,strip_y,rows,NULL,NULL)!=0) {result=TINYRT_VERIFY_FAILED;break;} }
+        frame.count=count;raster_bytes=result==TINYRT_OK ? sizeof(raster_surface):0;
+    }
     if (result==TINYRT_OK && frame.count) last_frame_count=frame.count;
     if (result!=TINYRT_OK) saved=before;
     else if (memcmp(&saved,&before,sizeof(saved))) ++commits;
@@ -131,7 +143,8 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
         saved=before;
         snprintf(error,sizeof(error),"%s",tinyrt_runtime_last_error(*rt));
     } else if (memcmp(&saved,&before,sizeof(saved))) ++commits;
-    tinyrt_runtime_destroy(*rt); *rt=NULL; frame.count=0;last_frame_count=0;
+    tinyrt_frame_release(&frame);
+    tinyrt_runtime_destroy(*rt); *rt=NULL; frame.count=0;last_frame_count=0;raster_bytes=0;
     next_clock_deadline=UINT64_MAX;
     clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
     if (phase || result!=TINYRT_OK) emit(phase ? phase : "stop",result,error,milliseconds()-start);
@@ -229,7 +242,7 @@ int main(int argc, char **argv) {
             result=cycle(rt,"touch",0,1,(int32_t)x,(int32_t)y,0);
         } else if ((!strcmp(op,"restart") || !strcmp(op,"reboot")) && !a) {
             if (!strcmp(op,"reboot")) {
-                now_ms_value=0; tinyrt_runtime_destroy(rt); rt=NULL;
+                now_ms_value=0; tinyrt_frame_release(&frame);tinyrt_runtime_destroy(rt); rt=NULL;
                 frame.count=0;last_frame_count=0;next_clock_deadline=UINT64_MAX;
             } else if (stop_instance(&rt,NULL)!=TINYRT_OK) { exit_code=1; break; }
             result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);

@@ -17,6 +17,13 @@ typedef struct {
     tinyrt_status_t (*play)(void *,const void *,uint32_t length,uint32_t sample_rate);
     void (*stop)(void *);
 } tinyrt_manager_audio_t;
+typedef struct { uint64_t init_us,event_us,render_us; uint32_t init_calls,event_calls,render_calls; } tinyrt_manager_perf_t;
+/* Optional monotonic microsecond clock, serialized owner only. Set before start.
+ * Getter is cumulative and follows the event/render export boundaries exactly.
+ * Guest composition may occur in either export; imports are included in that export.
+ * Store persistence, host raster and panel transfer are excluded. */
+tinyrt_status_t tinyrt_manager_set_perf_clock(tinyrt_manager_t *,void *,uint64_t (*)(void *));
+void tinyrt_manager_perf(const tinyrt_manager_t *,tinyrt_manager_perf_t *);
 tinyrt_status_t tinyrt_manager_set_audio(tinyrt_manager_t *,const tinyrt_manager_audio_t *);
 /* Synchronous single-owner engine. Runtime system must already be initialized
  * on this owner thread; close manager before shutting down the runtime. */

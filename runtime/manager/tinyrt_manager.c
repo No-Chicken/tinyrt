@@ -14,6 +14,9 @@ struct tinyrt_manager {
     uint32_t received;
     tinyrt_runtime_t *runtime;
     tinyrt_execution_guard_t guard;
+    void *perf_ctx;
+    uint64_t (*perf_now)(void *);
+    tinyrt_manager_perf_t perf;
     tinyrt_manager_audio_t audio;
     uint8_t *audio_buffer;
     tinyrt_app_info_t running;
@@ -395,8 +398,23 @@ static tinyrt_status_t fail_runtime(tinyrt_manager_t *m, tinyrt_status_t r) {
     destroy_runtime(m); /* A poisoned instance must never receive another call. */
     return r;
 }
+tinyrt_status_t tinyrt_manager_set_perf_clock(tinyrt_manager_t *m,void *ctx,uint64_t (*clock)(void *)) {
+    if(!m)return TINYRT_INVALID_ARGUMENT;
+    if(m->runtime)return TINYRT_BUSY;
+    m->perf_ctx=ctx;m->perf_now=clock;memset(&m->perf,0,sizeof(m->perf));return TINYRT_OK;
+}
+void tinyrt_manager_perf(const tinyrt_manager_t *m,tinyrt_manager_perf_t *out) {
+    if(!out)return;
+    if(m)*out=m->perf;else memset(out,0,sizeof(*out));
+}
+static uint64_t perf_begin(tinyrt_manager_t *m) {return m->perf_now?m->perf_now(m->perf_ctx):0;}
+static uint64_t perf_elapsed(tinyrt_manager_t *m,uint64_t start) {
+    uint64_t end=perf_begin(m);return end>=start?end-start:0;
+}
 static tinyrt_status_t finish_call(tinyrt_manager_t *m, tinyrt_frame_t *out) {
+    uint64_t begin=perf_begin(m);
     tinyrt_status_t r = tinyrt_runtime_render(m->runtime, out);
+    m->perf.render_us+=perf_elapsed(m,begin);m->perf.render_calls++;
     if (r == TINYRT_OK)
         r = persist(m, false);
     if (r != TINYRT_OK) {
@@ -488,7 +506,9 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
             m->resource_cache_size = cache_size;
         }
     }
+    uint64_t begin=perf_begin(m);
     r = tinyrt_runtime_init(m->runtime, width, height);
+    m->perf.init_us+=perf_elapsed(m,begin);m->perf.init_calls++;
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
     return finish_call(m, out);
@@ -502,7 +522,9 @@ tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t 
         return TINYRT_INVALID_ARGUMENT;
     if (!m->runtime)
         return TINYRT_NOT_FOUND;
+    uint64_t begin=perf_begin(m);
     tinyrt_status_t r = tinyrt_runtime_event(m->runtime, kind, x, y, arg);
+    m->perf.event_us+=perf_elapsed(m,begin);m->perf.event_calls++;
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
     return finish_call(m, out);

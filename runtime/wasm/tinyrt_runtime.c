@@ -105,6 +105,10 @@ struct tinyrt_runtime {
     tinyrt_runtime_host_t host;
     tinyrt_execution_guard_t guard;
     tinyrt_frame_t *frame;
+    tinyrt_gfx_resources_t *gfx;
+    uint32_t gfx_record_count,fb_w,fb_h,fb_scale;
+    uint64_t gfx_work;
+    bool gfx_open,gfx_rejected,fb_presented;
     int32_t width, height;
     uint32_t clock_interval_ms, callback, input_events, audio_requests;
     bool ready, failed, stopped, skipped, aot;
@@ -158,7 +162,8 @@ static tinyrt_draw_command_t *command(tinyrt_runtime_t *r, uint32_t kind)
     if (r->frame->count == 0 && kind != TINYRT_DRAW_CLEAR) {
         fail(r, "frame must start with clear"); return NULL;
     }
-    if (r->frame->count == 0) r->frame->pixel_bytes = 0;
+    if (r->gfx_open) { fail(r,"legacy command in open raster batch"); return NULL; }
+    if (r->frame->count == 0) { r->frame->pixel_bytes = 0; r->frame->gfx_bytes=0; r->frame->gfx_resources=NULL; r->frame->gfx_flags=0; r->frame->damage_count=0; }
     tinyrt_draw_command_t *c = &r->frame->commands[r->frame->count++];
     memset(c, 0, sizeof(*c));
     c->kind = kind;
@@ -352,6 +357,7 @@ static uint32_t now_ms(wasm_exec_env_t e)
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
 static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 : 0; }
+#include "tinyrt_gfx_imports.inc"
 static NativeSymbol natives[] = {
     { "asset_read", (void *)asset_read, "(iii)i", NULL },
     { "audio_play", (void *)audio_play, "(iii)i", NULL },
@@ -365,14 +371,25 @@ static NativeSymbol natives[] = {
     { "draw_skip", (void *)draw_skip, "()i", NULL },
     { "draw_text", (void *)draw_text, "(iiiii)i", NULL },
     { "draw_text_box", (void *)draw_text_box, "(iiiiiiiii)i", NULL },
+    { "fb_config", (void *)fb_config, "(iii)i", NULL },
+    { "fb_present", (void *)fb_present, "(iiiiii)i", NULL },
+    { "gfx_begin", (void *)gfx_begin, "(i)i", NULL },
+    { "gfx_caps", (void *)gfx_caps, "()i", NULL },
+    { "gfx_damage", (void *)gfx_damage, "(iiii)i", NULL },
+    { "gfx_end", (void *)gfx_end, "()i", NULL },
+    { "gfx_pal_upload", (void *)gfx_pal_upload, "(iiii)i", NULL },
+    { "gfx_submit", (void *)gfx_submit, "(ii)i", NULL },
+    { "gfx_tex_free", (void *)gfx_tex_free, "(i)i", NULL },
+    { "gfx_tex_update_rows", (void *)gfx_tex_update_rows, "(iiiii)i", NULL },
+    { "gfx_tex_upload", (void *)gfx_tex_upload, "(iiiiiii)i", NULL },
     { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL },
     { "runtime_backend", (void *)runtime_backend, "()i", NULL }
 };
-static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 1, 2, 2, 0, 0 };
-static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
+static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 1, 2, 2, 0, 0 };
+static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -651,6 +668,7 @@ tinyrt_status_t tinyrt_runtime_validate_aot(void *ctx,const tinyrt_store_io_t *i
 void tinyrt_runtime_destroy(tinyrt_runtime_t *r)
 {
     if (!r) return;
+    tinyrt_gfx_resources_release(r->gfx);
     if (r->env) wasm_runtime_destroy_exec_env(r->env);
     if (r->instance) wasm_runtime_deinstantiate(r->instance);
     if (r->module) wasm_runtime_unload(r->module);
@@ -802,19 +820,24 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r)
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
 {
     if (!out) return TINYRT_INVALID_ARGUMENT;
+    /* Raster callers initialize their frame once; legacy skip still changes
+     * only count, including arbitrary legacy output tails. */
+    if(out->commands[0].kind==TINYRT_DRAW_RASTER && out->gfx_bytes && out->gfx_bytes<=TINYRT_GFX_MAX_BYTES)tinyrt_frame_release(out);
     out->count = 0;
     if (!r || !r->ready || r->stopped) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     r->skipped = false;
+    r->gfx_open=false;r->gfx_rejected=false;
     r->frame = out;
     uint32_t argv[1] = { 0 };
     tinyrt_status_t status = invoke(r, 2, 0, argv);
     r->frame = NULL;
+    if (r->gfx_rejected || r->gfx_open) { if(out->count && out->commands[0].kind==TINYRT_DRAW_RASTER)tinyrt_frame_release(out); out->count=0;return TINYRT_INVALID_ARGUMENT; }
     if (status == TINYRT_OK && !out->count && !r->skipped) {
         fail(r, "empty frame");
         status = TINYRT_VERIFY_FAILED;
     }
-    if (status != TINYRT_OK) out->count = 0;
+    if (status != TINYRT_OK) { if(out->count && out->commands[0].kind==TINYRT_DRAW_RASTER)tinyrt_frame_release(out);out->count = 0; }
     return status;
 }
 uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r)

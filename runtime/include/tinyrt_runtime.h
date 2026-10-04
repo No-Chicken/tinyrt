@@ -1,6 +1,7 @@
 #ifndef TINYRT_RUNTIME_H
 #define TINYRT_RUNTIME_H
 #include "tinyrt_package.h"
+#include "tinyrt_gfx.h"
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,7 +29,7 @@ typedef struct {
 } tinyrt_runtime_aot_config_t;
 typedef enum { TINYRT_DRAW_CLEAR=1, TINYRT_DRAW_RECT=2, TINYRT_DRAW_TEXT=3,
     TINYRT_DRAW_ROUND_RECT=4, TINYRT_DRAW_ARC=5, TINYRT_DRAW_TEXT_BOX=6,
-    TINYRT_DRAW_RGB565=7, TINYRT_DRAW_RGB565_SCALED=8 } tinyrt_draw_kind_t;
+    TINYRT_DRAW_RGB565=7, TINYRT_DRAW_RGB565_SCALED=8, TINYRT_DRAW_RASTER=9 } tinyrt_draw_kind_t;
 typedef struct {
     uint32_t kind;
     int32_t x, y, w, h;
@@ -37,11 +38,15 @@ typedef struct {
     int32_t source_w, source_h;
     char text[64];
 } tinyrt_draw_command_t;
-typedef struct {
+typedef struct tinyrt_frame {
     uint32_t count;
     tinyrt_draw_command_t commands[TINYRT_FRAME_MAX_COMMANDS];
     uint32_t pixel_bytes;
     uint8_t pixels[TINYRT_FRAME_MAX_PIXEL_BYTES];
+    uint32_t gfx_bytes, gfx_flags, gfx_scale, damage_count;
+    tinyrt_gfx_damage_t damage[8];
+    tinyrt_gfx_resources_t *gfx_resources;
+    uint8_t gfx_records[TINYRT_GFX_MAX_BYTES];
 } tinyrt_frame_t;
 typedef struct {
     void *ctx;
@@ -107,7 +112,10 @@ tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *, int32_t kind, int32_t x
  * at most once under the normal callback budget. No drawing; no calls after
  * failure. Owner checkpoints/rolls back RAM KV and must destroy afterwards. */
 tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *);
-/* Draws directly into caller-owned, exclusively writable, unpublished storage.
+/* Raster output storage must be zero initialized before its first use.
+ * Reusing a previously returned raster frame automatically releases its resource
+ * snapshot; copied/queued frames must retain separately and release on retirement.
+ * Draws directly into caller-owned, exclusively writable, unpublished storage.
  * The pointer is borrowed only during this call. Publish only TINYRT_OK frames
  * with count > 0; only commands[0..count) and pixels[0..pixel_bytes) are valid.
  * Unused tails are untouched. draw_skip changes only count to zero; retain the

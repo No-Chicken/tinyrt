@@ -16,7 +16,7 @@ if(MSVC)
   target_compile_options(tinyrt_wamr PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:/wd4996;/utf-8>")
 endif()
 
-add_library(tinyrt_runtime STATIC "${TINYRT_CORE_ROOT}/runtime/wasm/tinyrt_runtime.c")
+add_library(tinyrt_runtime STATIC "${TINYRT_CORE_ROOT}/runtime/wasm/tinyrt_runtime.c" "${TINYRT_CORE_ROOT}/runtime/gfx/tinyrt_gfx.c")
 target_include_directories(tinyrt_runtime PUBLIC "${TINYRT_CORE_ROOT}/runtime/include")
 target_link_libraries(tinyrt_runtime PUBLIC tinyrt_wamr)
 if(MSVC)

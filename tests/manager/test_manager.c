@@ -308,7 +308,20 @@ static void test_resource_cache(void) {
  tinyrt_manager_close(m);metadata_audio=0;runtime_resource=0;
  saves=clears=runtime_destroy_count=0;kv_mask=0;
 }
+static uint64_t perf_tick;
+static uint64_t microclock(void *ctx) {(void)ctx;perf_tick+=10;return perf_tick;}
+static void test_perf(void) {
+ fake_nor_init(&nor);tinyrt_manager_t *m=open_manager();tinyrt_app_info_t a=install(m,1);
+ CHECK(tinyrt_manager_set_perf_clock(m,NULL,microclock)==TINYRT_OK);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_OK);
+ tinyrt_manager_perf_t p;tinyrt_manager_perf(m,&p);
+ CHECK(p.init_calls==1 && p.event_calls==1 && p.render_calls==2);
+ CHECK(p.init_us==10 && p.event_us==10 && p.render_us==20);
+ tinyrt_manager_close(m);tinyrt_manager_perf(NULL,&p);CHECK(p.event_us==0 && p.render_calls==0);
+}
 int main(void) {
+ test_perf();
  test_resource_cache();
  test_output_ownership();
  test_skipped_frame_and_clock();

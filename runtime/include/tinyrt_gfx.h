@@ -76,6 +76,16 @@ typedef void (*tinyrt_gfx_text_fn)(void *ctx,uint16_t *pixels,uint32_t stride,
 int tinyrt_gfx_render_strip(const struct tinyrt_frame *,uint16_t *,uint32_t stride,
  uint32_t width,uint32_t height,uint32_t strip_y,uint32_t strip_rows,tinyrt_gfx_text_fn,void *);
 int tinyrt_gfx_render_reference_strip(const struct tinyrt_frame *,uint16_t *,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,tinyrt_gfx_text_fn,void *);
+/* Internal host API: physical region, independent of gfx_scale. dst points to
+ * full-width row y (not pixel x); stride is uint16_t pixels. Requires a nonempty
+ * region within the viewport. Neither reads nor writes destination pixels
+ * outside it. Font callbacks must obey the intersected physical clip supplied.
+ * Guest CLIP/reset and legacy overlays cannot expand this host region. */
+int tinyrt_gfx_render_region(const struct tinyrt_frame *,uint16_t *,uint32_t stride,
+ uint32_t width,uint32_t height,uint32_t x,uint32_t y,uint32_t region_width,
+ uint32_t rows,tinyrt_gfx_text_fn,void *);
+int tinyrt_gfx_render_reference_region(const struct tinyrt_frame *,uint16_t *,uint32_t,
+ uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,uint32_t,tinyrt_gfx_text_fn,void *);
 void tinyrt_frame_release(struct tinyrt_frame *);
 void tinyrt_gfx_damage_merge(struct tinyrt_frame *,const tinyrt_gfx_damage_t *);
 #ifdef __cplusplus

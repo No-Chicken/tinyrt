@@ -610,6 +610,65 @@ static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
       y1 = min_i(min_i(y + h, (int)(v->y + v->rows)), v->clip.y + v->clip.h);
   if (x1 <= x0 || y1 <= y0)
     return 1;
+  /* Integer nearest-neighbour magnification samples once per source pixel.
+   * Transparent blocks retain each destination's own base; ADD still blends
+   * each destination independently. No copied row can carry stale background. */
+  if ((uint32_t)w % rw == 0 && (uint32_t)h % rh == 0) {
+    uint32_t bw = (uint32_t)w / rw, bh = (uint32_t)h / rh;
+    /* Scaling must also be integral in logical coordinates: otherwise a
+     * physical integer ratio need not match the scalar floor-before-scale. */
+    if (u32(p + 8) % rw == 0 && u32(p + 12) % rh == 0) {
+      uint32_t a0 = (uint32_t)(x0 - x) / bw,
+               a1 = ((uint32_t)(x1 - x) + bw - 1) / bw,
+               b0 = (uint32_t)(y0 - y) / bh,
+               b1 = ((uint32_t)(y1 - y) + bh - 1) / bh;
+      uint32_t u = u32(p + 20), top = u32(p + 24);
+      const uint16_t *palette =
+          t->format == 1 ? v->resources->palettes[u32(p + 40)] : NULL;
+      int solid = op == TINYRT_GFX_SOLID_SPRITE,
+          add = op == TINYRT_GFX_ADD_SPRITE;
+      int clone_row = !add && (t->format == 2 || !(flags & 1));
+      uint16_t ink = (uint16_t)u32(p + 44);
+      for (uint32_t b = b0; b < b1; b++) {
+        int yy0 = max_i(y + (int)(b * bh), y0),
+            yy1 = min_i(y + (int)((b + 1) * bh), y1);
+        for (uint32_t a = a0; a < a1; a++) {
+          uint32_t tx, ty;
+          if (rot == 0) { tx = a; ty = b; }
+          else if (rot == 1) { tx = b; ty = sh - 1 - a; }
+          else if (rot == 2) { tx = sw - 1 - a; ty = sh - 1 - b; }
+          else { tx = sw - 1 - b; ty = a; }
+          if (flags & 2) tx = sw - 1 - tx;
+          if (flags & 4) ty = sh - 1 - ty;
+          uint32_t at = (top + ty) * t->w + u + tx;
+          uint16_t color;
+          if (t->format == 1) {
+            uint8_t index = t->data[at];
+            if (!index && (flags & 1)) continue;
+            color = solid ? ink : palette[index];
+          } else color = solid ? ink : (uint16_t)u16(t->data + 2 * at);
+          int xx0 = max_i(x + (int)(a * bw), x0),
+              xx1 = min_i(x + (int)((a + 1) * bw), x1);
+          for (int yy = yy0; yy < (clone_row ? yy0 + 1 : yy1); yy++) {
+            uint16_t *dst = v->dst + (uint32_t)(yy - (int)v->y) * v->stride;
+            if (add) {
+              for (int xx = xx0; xx < xx1; xx++)
+                dst[xx] = add565(dst[xx], color);
+            } else fill_color(dst + xx0, (uint32_t)(xx1 - xx0), color);
+          }
+        }
+        /* An opaque source row overwrites the entire clipped span. Only then
+         * is copying repeated rows safe even when their old bases differ. */
+        if (clone_row) {
+          uint16_t *first = v->dst + (uint32_t)(yy0 - (int)v->y) * v->stride;
+          for (int yy = yy0 + 1; yy < yy1; yy++)
+            memcpy(v->dst + (uint32_t)(yy - (int)v->y) * v->stride + x0,
+                   first + x0, (uint32_t)(x1 - x0) * sizeof(*first));
+        }
+      }
+      return 1;
+    }
+  }
   if (x1 - x0 > 512)
     return 0;
   uint32_t xmap[512];
@@ -856,12 +915,22 @@ static void store32(uint8_t *p, uint32_t n) {
 static uint16_t rgb565(uint32_t c) {
   return (uint16_t)(((c >> 8) & 0xf800) | ((c >> 5) & 0x7e0) | ((c >> 3) & 31));
 }
-static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
+static tinyrt_gfx_damage_t intersect_clip(tinyrt_gfx_damage_t a,
+                                         tinyrt_gfx_damage_t b) {
+  int x = max_i(a.x, b.x), y = max_i(a.y, b.y);
+  int right = min_i(a.x + a.w, b.x + b.w),
+      bottom = min_i(a.y + a.h, b.y + b.h);
+  return (tinyrt_gfx_damage_t){x, y, max_i(0, right - x),
+                              max_i(0, bottom - y)};
+}
+static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
                              uint32_t stride, uint32_t width, uint32_t height,
-                             uint32_t y, uint32_t rows, tinyrt_gfx_text_fn text,
+                             uint32_t x, uint32_t y, uint32_t region_width,
+                             uint32_t rows, tinyrt_gfx_text_fn text,
                              void *ctx, int reference) {
   if (!f || !dst || !width || !height || width > 32767 || height > 32767 ||
-      stride < width || y > height || rows > height - y || !rows ||
+      stride < width || x > width || region_width > width - x || !region_width ||
+      y > height || rows > height - y || !rows ||
       f->gfx_bytes > TINYRT_GFX_MAX_BYTES)
     return -1;
   if (f->gfx_bytes && (f->gfx_scale < 1 || f->gfx_scale > 3 ||
@@ -872,6 +941,8 @@ static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
       tinyrt_gfx_work(f->gfx_records, f->gfx_bytes, width, height,
                       f->gfx_scale) > (uint64_t)width * height * 8u)
     return -1;
+  tinyrt_gfx_damage_t host_clip = {(int32_t)x, (int32_t)y,
+                                  (int32_t)region_width, (int32_t)rows};
   render_t v = {dst,
                 stride,
                 width,
@@ -879,7 +950,7 @@ static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
                 y,
                 rows,
                 f->gfx_bytes ? f->gfx_scale : 1,
-                {0, 0, (int32_t)width, (int32_t)height},
+                host_clip,
                 f->gfx_resources,
                 text,
                 ctx,
@@ -887,19 +958,20 @@ static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
   if (!(f->gfx_flags & TINYRT_GFX_KEEP_PREVIOUS) &&
       !(f->gfx_bytes >= 8 && u16(f->gfx_records) == TINYRT_GFX_CLEAR))
     for (uint32_t j = 0; j < rows; j++)
-      memset(dst + j * stride, 0, width * 2);
+      memset(dst + j * stride + x, 0, region_width * 2);
   for (uint32_t off = 0; off < f->gfx_bytes;) {
     const uint8_t *p = f->gfx_records + off;
     uint32_t op = u16(p), sz = u16(p + 2);
     p += 4;
     if (op == TINYRT_GFX_CLIP) {
       if (!u32(p + 8))
-        v.clip = (tinyrt_gfx_damage_t){0, 0, (int32_t)width, (int32_t)height};
+        v.clip = host_clip;
       else
         v.clip = (tinyrt_gfx_damage_t){(int32_t)u32(p) * (int32_t)v.scale,
                                        (int32_t)u32(p + 4) * (int32_t)v.scale,
                                        (int32_t)u32(p + 8) * (int32_t)v.scale,
                                        (int32_t)u32(p + 12) * (int32_t)v.scale};
+      v.clip = intersect_clip(v.clip, host_clip);
     } else if (op == TINYRT_GFX_SET_PAL) { /* Palette is explicit per record for
                                               atomic validation. */
     } else if (op == TINYRT_GFX_SPRITE_BATCH) {
@@ -923,7 +995,7 @@ static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
   }
   /* Legacy commands after the raster marker share the same native surface. */
   v.scale = 1;
-  v.clip = (tinyrt_gfx_damage_t){0, 0, (int32_t)width, (int32_t)height};
+  v.clip = host_clip;
   for (uint32_t i = 0; i < f->count; i++) {
     const tinyrt_draw_command_t *c = &f->commands[i];
     uint8_t b[68] = {0}, *p = b + 4;
@@ -975,7 +1047,8 @@ static int render_strip_impl(const tinyrt_frame_t *f, uint16_t *dst,
       if (sw <= 0 || sh <= 0 || c->w <= 0 || c->h <= 0 ||
           (uint32_t)sw * (uint32_t)sh * 2 > f->pixel_bytes)
         return -1;
-      int x0 = max_i(c->x, 0), x1 = min_i(c->x + c->w, (int)width),
+      int x0 = max_i(c->x, (int)x),
+          x1 = min_i(c->x + c->w, (int)(x + region_width)),
           y0 = max_i(c->y, (int)y), y1 = min_i(c->y + c->h, (int)(y + rows));
       for (int yy = y0; yy < y1; yy++)
         for (int xx = x0; xx < x1; xx++) {
@@ -1024,11 +1097,26 @@ int tinyrt_gfx_framebuffer_patch(tinyrt_gfx_resources_t **rp, uint32_t slot,
 int tinyrt_gfx_render_strip(const tinyrt_frame_t *f, uint16_t *p,
                             uint32_t stride, uint32_t w, uint32_t h, uint32_t y,
                             uint32_t rows, tinyrt_gfx_text_fn text, void *ctx) {
-  return render_strip_impl(f, p, stride, w, h, y, rows, text, ctx, 0);
+  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 0);
 }
 int tinyrt_gfx_render_reference_strip(const tinyrt_frame_t *f, uint16_t *p,
                                       uint32_t stride, uint32_t w, uint32_t h,
                                       uint32_t y, uint32_t rows,
                                       tinyrt_gfx_text_fn text, void *ctx) {
-  return render_strip_impl(f, p, stride, w, h, y, rows, text, ctx, 1);
+  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 1);
+}
+int tinyrt_gfx_render_region(const tinyrt_frame_t *f, uint16_t *p,
+                             uint32_t stride, uint32_t w, uint32_t h,
+                             uint32_t x, uint32_t y, uint32_t region_width,
+                             uint32_t rows, tinyrt_gfx_text_fn text, void *ctx) {
+  return render_region_impl(f, p, stride, w, h, x, y, region_width, rows,
+                            text, ctx, 0);
+}
+int tinyrt_gfx_render_reference_region(const tinyrt_frame_t *f, uint16_t *p,
+                                       uint32_t stride, uint32_t w, uint32_t h,
+                                       uint32_t x, uint32_t y,
+                                       uint32_t region_width, uint32_t rows,
+                                       tinyrt_gfx_text_fn text, void *ctx) {
+  return render_region_impl(f, p, stride, w, h, x, y, region_width, rows,
+                            text, ctx, 1);
 }

@@ -123,9 +123,22 @@ framebuffer damage can be merged safely and rendered from the latest snapshot.
 ## Portable renderer and host boundary
 
 `tinyrt_gfx_render_strip` accepts uint16_t pixels with stride measured in pixels,
-not bytes. It writes only the requested rows. GRID fills cells directly; sprites
-hoist descriptors and use a bounded 512-entry source-offset map. Wider destination
-spans use the scalar fallback. `tinyrt_gfx_render_reference_strip` uses scalar
+not bytes. It writes only the requested rows. The internal host entrypoint
+`tinyrt_gfx_render_region` additionally bounds reads and writes of destination
+pixels to a nonempty physical rectangle within the viewport. Its destination
+still points to the full-width origin of the first requested row; x is not a
+pointer offset. Implicit clearing, CLEAR, Guest CLIP/reset and legacy overlays
+all obey that rectangle. The font callback receives its intersection with the
+current Guest clip and must restrict its pixel access accordingly. The existing
+strip entrypoint is equivalent to a region spanning the viewport width.
+
+GRID fills cells directly. Integer nearest-neighbor sprite magnification samples
+once per source pixel and fills its clipped destination block. Opaque repeated
+rows copy only that fully overwritten span; transparent blocks preserve each
+destination's own prior pixels, and ADD blends each destination separately.
+Other sprites hoist descriptors and use a bounded 512-entry source-offset map.
+Wider destination spans use the scalar fallback. `tinyrt_gfx_render_reference_strip`
+and `tinyrt_gfx_render_reference_region` use scalar
 per-pixel RECT/CLEAR/GRID/SPRITE operations. Tests compare fast and reference
 outputs for scaling, masks, rotations, clipping and one-row strips.
 

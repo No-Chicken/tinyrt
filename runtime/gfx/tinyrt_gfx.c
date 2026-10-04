@@ -597,7 +597,45 @@ static void paint_grid(render_t *v, const uint8_t *p, const uint8_t *indices) {
     }
   }
 }
-static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
+#if defined(_MSC_VER)
+#define TINYRT_GFX_NOINLINE __declspec(noinline)
+#elif defined(__GNUC__) || defined(__clang__)
+#define TINYRT_GFX_NOINLINE __attribute__((noinline))
+#else
+#define TINYRT_GFX_NOINLINE
+#endif
+/* The first and last clipped sample may have only one destination pixel.
+ * Whole pairs use direct stores, with no tiny fill calls or offset array. */
+static TINYRT_GFX_NOINLINE void expand_index2_row(
+    uint16_t *dst, const uint8_t *src, uint32_t count, uint32_t leading,
+    int step, const uint16_t *palette, int transparent) {
+  int offset = 0;
+  if (leading) {
+    uint8_t index = src[0];
+    if (index || !transparent) *dst = palette[index];
+    dst++;
+    count--;
+    offset += step;
+  }
+  while (count >= 2) {
+    uint8_t index = src[offset];
+    if (index || !transparent) {
+      uint16_t color = palette[index];
+      dst[0] = color;
+      dst[1] = color;
+    }
+    dst += 2;
+    count -= 2;
+    offset += step;
+  }
+  if (count) {
+    uint8_t index = src[offset];
+    if (index || !transparent) *dst = palette[index];
+  }
+}
+/* Kept separate from the 512-entry fallback map: the target UI stack may be
+ * external memory, and a large frame makes hot-loop spills much more costly. */
+static TINYRT_GFX_NOINLINE int paint_integer_sprite(render_t *v, uint32_t op, const uint8_t *p) {
   uint32_t flags = u32(p + 36), rot = (flags >> 3) & 3, sw = u32(p + 28),
            sh = u32(p + 32), k = v->scale;
   texture_t *t = v->resources->textures[u32(p + 16)];
@@ -632,6 +670,19 @@ static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
       for (uint32_t b = b0; b < b1; b++) {
         int yy0 = max_i(y + (int)(b * bh), y0),
             yy1 = min_i(y + (int)((b + 1) * bh), y1);
+        if (bw == 2 && !(rot & 1) && t->format == 1 &&
+            op == TINYRT_GFX_SPRITE) {
+          int reverse_x = !!(flags & 2) ^ (rot == 2),
+              reverse_y = !!(flags & 4) ^ (rot == 2);
+          uint32_t tx = reverse_x ? sw - 1 - a0 : a0,
+                   ty = reverse_y ? sh - 1 - b : b;
+          const uint8_t *src = t->data + (top + ty) * t->w + u + tx;
+          for (int yy = yy0; yy < (clone_row ? yy0 + 1 : yy1); yy++)
+            expand_index2_row(v->dst + (uint32_t)(yy - (int)v->y) * v->stride + x0,
+                              src, (uint32_t)(x1 - x0),
+                              (uint32_t)(x0 - x) & 1u,
+                              reverse_x ? -1 : 1, palette, flags & 1);
+        } else {
         for (uint32_t a = a0; a < a1; a++) {
           uint32_t tx, ty;
           if (rot == 0) { tx = a; ty = b; }
@@ -654,8 +705,12 @@ static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
             if (add) {
               for (int xx = xx0; xx < xx1; xx++)
                 dst[xx] = add565(dst[xx], color);
+            } else if (bw == 2) {
+              dst[xx0] = color;
+              if (xx1 - xx0 == 2) dst[xx0 + 1] = color;
             } else fill_color(dst + xx0, (uint32_t)(xx1 - xx0), color);
           }
+        }
         }
         /* An opaque source row overwrites the entire clipped span. Only then
          * is copying repeated rows safe even when their old bases differ. */
@@ -669,6 +724,21 @@ static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
       return 1;
     }
   }
+  return 0;
+}
+static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
+  uint32_t flags = u32(p + 36), rot = (flags >> 3) & 3, sw = u32(p + 28),
+           sh = u32(p + 32), k = v->scale;
+  texture_t *t = v->resources->textures[u32(p + 16)];
+  uint32_t rw = (rot & 1) ? sh : sw, rh = (rot & 1) ? sw : sh;
+  int x = (int32_t)u32(p) * (int)k, y = (int32_t)u32(p + 4) * (int)k,
+      w = (int)u32(p + 8) * (int)k, h = (int)u32(p + 12) * (int)k;
+  int x0 = max_i(max_i(x, 0), v->clip.x),
+      x1 = min_i(min_i(x + w, (int)v->width), v->clip.x + v->clip.w);
+  int y0 = max_i(max_i(y, (int)v->y), v->clip.y),
+      y1 = min_i(min_i(y + h, (int)(v->y + v->rows)), v->clip.y + v->clip.h);
+  if (x1 <= x0 || y1 <= y0)
+    return 1;
   if (x1 - x0 > 512)
     return 0;
   uint32_t xmap[512];
@@ -725,7 +795,7 @@ static void paint(render_t *v, uint32_t op, const uint8_t *p,
   if (!v->reference &&
       (op == TINYRT_GFX_SPRITE || op == TINYRT_GFX_SOLID_SPRITE ||
        op == TINYRT_GFX_ADD_SPRITE) &&
-      paint_sprite(v, op, p))
+      (paint_integer_sprite(v, op, p) || paint_sprite(v, op, p)))
     return;
   if (op == TINYRT_GFX_GRID && !v->reference) {
     paint_grid(v, p, extra);

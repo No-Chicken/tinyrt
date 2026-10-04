@@ -136,6 +136,9 @@ GRID fills cells directly. Integer nearest-neighbor sprite magnification samples
 once per source pixel and fills its clipped destination block. Opaque repeated
 rows copy only that fully overwritten span; transparent blocks preserve each
 destination's own prior pixels, and ADD blends each destination separately.
+The integer path has a separate non-inlined stack frame from the source-offset
+map fallback. Common 2x INDEX8 rows use direct paired pixel stores without a
+fill call per source sample; clipped single-pixel edges obey the same mapping.
 Other sprites hoist descriptors and use a bounded 512-entry source-offset map.
 Wider destination spans use the scalar fallback. `tinyrt_gfx_render_reference_strip`
 and `tinyrt_gfx_render_reference_region` use scalar

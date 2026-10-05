@@ -993,6 +993,28 @@ static tinyrt_gfx_damage_t intersect_clip(tinyrt_gfx_damage_t a,
   return (tinyrt_gfx_damage_t){x, y, max_i(0, right - x),
                               max_i(0, bottom - y)};
 }
+/* Called after whole-frame validation. A first opaque overwrite covering the
+ * host region makes its implicit black clear redundant. Constant work: no
+ * suffix scans, region fragments, cached images or per-record analysis. */
+static int first_record_covers(const tinyrt_frame_t *f,
+                               tinyrt_gfx_damage_t host) {
+  if (!f->gfx_bytes) return 0;
+  uint32_t op = u16(f->gfx_records);
+  const uint8_t *p = f->gfx_records + 4;
+  if (op == TINYRT_GFX_CLEAR) return 1;
+  if (op == TINYRT_GFX_RECT) {
+    if (u32(p + 20) != 255) return 0;
+  } else if (op == TINYRT_GFX_SPRITE) {
+    texture_t *t = f->gfx_resources->textures[u32(p + 16)];
+    if (t->format == 1 && (u32(p + 36) & 1u)) return 0;
+  } else return 0;
+  int32_t x = (int32_t)u32(p) * (int32_t)f->gfx_scale,
+          y = (int32_t)u32(p + 4) * (int32_t)f->gfx_scale,
+          w = (int32_t)u32(p + 8) * (int32_t)f->gfx_scale,
+          h = (int32_t)u32(p + 12) * (int32_t)f->gfx_scale;
+  return x <= host.x && y <= host.y &&
+         x + w >= host.x + host.w && y + h >= host.y + host.h;
+}
 static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
                              uint32_t stride, uint32_t width, uint32_t height,
                              uint32_t x, uint32_t y, uint32_t region_width,
@@ -1026,7 +1048,8 @@ static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
                 ctx,
                 reference};
   if (!(f->gfx_flags & TINYRT_GFX_KEEP_PREVIOUS) &&
-      !(f->gfx_bytes >= 8 && u16(f->gfx_records) == TINYRT_GFX_CLEAR))
+      !(f->gfx_bytes >= 8 && u16(f->gfx_records) == TINYRT_GFX_CLEAR) &&
+      (reference || !first_record_covers(f, host_clip)))
     for (uint32_t j = 0; j < rows; j++)
       memset(dst + j * stride + x, 0, region_width * 2);
   for (uint32_t off = 0; off < f->gfx_bytes;) {

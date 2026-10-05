@@ -1,4 +1,4 @@
-# Raster graphics extension (ABI 1, core 0.0.2)
+# Raster graphics extension (ABI 1, core 0.0.3)
 
 This extension is optional. Existing immediate imports, permissions, package version,
 AOT safety profile, mandatory initial legacy `draw_clear`, and `draw_skip` semantics
@@ -131,6 +131,14 @@ pointer offset. Implicit clearing, CLEAR, Guest CLIP/reset and legacy overlays
 all obey that rectangle. The font callback receives its intersection with the
 current Guest clip and must restrict its pixel access accordingly. The existing
 strip entrypoint is equivalent to a region spanning the viewport width.
+
+If the first validated record is CLEAR, fully opaque RECT, or an opaque
+SPRITE covering the current host region, the renderer omits its implicit black
+clear. This adds only constant work per strip/region and applies regardless of
+sprite rotation or nearest-neighbor scaling. Transparent INDEX8 sprites,
+partial coverage, alpha RECT, and leading CLIP/SET_PAL records retain normal
+clearing. Every record is still replayed in order; there are no suffix scans,
+visible-region fragments, image caches, or changes to work admission.
 
 GRID fills cells directly. Integer nearest-neighbor sprite magnification samples
 once per source pixel and fills its clipped destination block. Opaque repeated

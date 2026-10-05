@@ -151,7 +151,7 @@ new project license. WAMR is obtained separately at a fixed revision and retains
 its upstream license. Test signing scalars 1, 2, 42 and 43 are public test fixtures;
 they must never be trusted by production devices. No production keys are stored.
 
-## Optional raster graphics (0.0.2)
+## Optional raster graphics (0.0.3)
 
 ABI 1 adds bounded batches, compact GRID, resident INDEX8/RGB565 textures and
 palettes, sprites with quarter-turn rotations, partial framebuffers, explicit

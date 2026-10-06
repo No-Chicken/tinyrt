@@ -12,8 +12,13 @@
 #include <sys/lock.h>
 
 #define MAX_MAPPINGS 64u
+#if CONFIG_IDF_TARGET_ESP32S31
+/* S31 uses a unified PSRAM address window and 64-byte L1 cache lines. */
+#define CACHE_ALIGNMENT ((size_t)CONFIG_CACHE_L1_DCACHE_LINE_SIZE)
+#else
 #define CACHE_ALIGNMENT ((size_t)(CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE > CONFIG_ESP32S3_INSTRUCTION_CACHE_LINE_SIZE \
     ? CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE : CONFIG_ESP32S3_INSTRUCTION_CACHE_LINE_SIZE))
+#endif
 
 typedef struct {
     void *address;

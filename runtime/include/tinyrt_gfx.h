@@ -2,6 +2,7 @@
 #define TINYRT_GFX_H
 #include <stdint.h>
 #include <stddef.h>
+#include <stdbool.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -53,6 +54,12 @@ typedef struct { int32_t x,y,w,h; } tinyrt_gfx_damage_t;
 typedef struct tinyrt_gfx_resources tinyrt_gfx_resources_t;
 typedef void *(*tinyrt_gfx_alloc_fn)(unsigned int);
 typedef void (*tinyrt_gfx_free_fn)(void *);
+/* Host backend: configure before starting any drawing threads. Returning false
+ * requests the bit-identical software fill. The buffer owns stride*rows pixels;
+ * x/y/w/h are already clipped and y is relative to its first row. */
+typedef bool (*tinyrt_gfx_fill_fn)(void *,uint16_t *,uint32_t,uint32_t,
+                                 uint32_t,uint32_t,uint32_t,uint32_t,uint16_t);
+void tinyrt_gfx_set_fill_accelerator(tinyrt_gfx_fill_fn,void *);
 tinyrt_gfx_resources_t *tinyrt_gfx_resources_create(tinyrt_gfx_alloc_fn,tinyrt_gfx_free_fn);
 /* Separate bounded 1152KiB pool; includes metadata and queued COW snapshots. */
 size_t tinyrt_gfx_memory_used(void);

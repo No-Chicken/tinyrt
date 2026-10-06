@@ -5,6 +5,16 @@
 #define CHECK(x) do {if(!(x)){fprintf(stderr,"line %d: %s\n",__LINE__,#x);return 1;}}while(0)
 static tinyrt_frame_t frame;
 static unsigned text_calls;
+static unsigned accelerated_fills;
+static bool decline_fill;
+static bool host_fill(void *ctx,uint16_t *dst,uint32_t stride,uint32_t rows,
+                      uint32_t x,uint32_t y,uint32_t w,uint32_t h,uint16_t color) {
+ (void)ctx;accelerated_fills++;
+ if(decline_fill)return false;
+ if(!w || !h || x+w>stride || y+h>rows)abort();
+ for(uint32_t yy=y;yy<y+h;yy++)for(uint32_t xx=x;xx<x+w;xx++)dst[yy*stride+xx]=color;
+ return true;
+}
 /* Deliberately paints every callback clip pixel: host bounds must reach fonts. */
 static void region_text(void *ctx,uint16_t *pixels,uint32_t stride,uint32_t width,uint32_t height,uint32_t y,uint32_t rows,const tinyrt_gfx_text_t *text,const char *utf8,const tinyrt_gfx_damage_t *clip,uint32_t scale) {
  (void)width;(void)height;(void)text;(void)utf8;(void)scale;
@@ -102,6 +112,11 @@ static int region_guard_pages(void) {
 #endif
 int main(void) {
  CHECK(!region_properties());
+ tinyrt_gfx_set_fill_accelerator(host_fill,NULL);
+ CHECK(!region_properties());CHECK(accelerated_fills>0);
+ decline_fill=true;accelerated_fills=0;
+ CHECK(!region_properties());CHECK(accelerated_fills>0);
+ tinyrt_gfx_set_fill_accelerator(NULL,NULL);
 #ifdef _WIN32
  CHECK(clear_guard_page()==0);
  CHECK(region_guard_pages()==0);

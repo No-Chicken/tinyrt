@@ -4,7 +4,9 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+#ifndef TINYRT_STORE_SIZE
 #define TINYRT_STORE_SIZE UINT32_C(0x4E0000)
+#endif
 #define TINYRT_STORE_SECTOR_SIZE UINT32_C(0x1000)
 #define TINYRT_STORE_MAX_PACKAGE_SIZE UINT32_C(0x200000)
 #define TINYRT_STORE_MAX_APPS 16u

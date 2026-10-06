@@ -6,7 +6,6 @@ import subprocess
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--output", required=True, type=Path)
-parser.add_argument("--target", choices=("esp32s3","esp32s31"),default="esp32s3")
 args = parser.parse_args()
 out = args.output.resolve()
 out.mkdir(parents=True, exist_ok=True)
@@ -61,15 +60,12 @@ static void _lock_acquire(_lock_t *p) { (void)p; }
 static void _lock_release(_lock_t *p) { (void)p; }
 ''',
 }
-if args.target=="esp32s31":
-    mocks['sdkconfig.h']='#define CONFIG_IDF_TARGET_ESP32S31 1\n#define CONFIG_CACHE_L1_DCACHE_LINE_SIZE 64\n#define CONFIG_MMU_PAGE_SIZE 65536\n'
 for name, text in mocks.items():
     path = out / name
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
 exe = out / "test-exec-memory.exe"
 subprocess.run(["cl", "/nologo", "/W4", "/WX", "/utf-8", "/std:c11", "/D_CRT_SECURE_NO_WARNINGS",
-                "/DTEST_UNIFIED_ADDRESS="+str(int(args.target=="esp32s31")),
                 "/I" + str(out), "/I" + str(port), str(port / "tinyrt_esp_exec_memory.c"),
                 str(port / "tests/test_exec_memory.c"), "/Fe:" + str(exe)], cwd=out, check=True)
 subprocess.run([str(exe)], check=True, timeout=15)

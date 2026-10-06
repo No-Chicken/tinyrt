@@ -9,11 +9,7 @@
 #include "esp_mmu_map.h"
 #include "tinyrt_esp_exec_memory.h"
 
-#if TEST_UNIFIED_ADDRESS
-#define ALIAS_DELTA ((uintptr_t)0)
-#else
 #define ALIAS_DELTA ((uintptr_t)0x10000000)
-#endif
 static unsigned allocations, frees, cache_calls;
 static int fail_allocate, fail_alias, fail_cache, fail_unmap_alias;
 static void *live_data;
@@ -126,7 +122,7 @@ int main(int argc, char **argv)
         code = os_mmap(NULL, 129, rwx, 0, -1);
         assert(code && ((uintptr_t)code & 63) == 0);
         data = os_get_dbus_mirror(code);
-        assert(data == live_data && (ALIAS_DELTA ? code != data : code == data));
+        assert(data == live_data && code != data);
         for (unsigned j = 0; j < 192; ++j) assert(((unsigned char *)data)[j] == 0);
         assert(os_get_dbus_mirror((char *)code + 128) == (char *)data + 128);
         memset(data, 0xA5, 129);

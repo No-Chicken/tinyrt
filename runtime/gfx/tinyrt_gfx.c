@@ -3,11 +3,6 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
-static tinyrt_gfx_fill_fn s_fill_accelerator;
-static void *s_fill_context;
-void tinyrt_gfx_set_fill_accelerator(tinyrt_gfx_fill_fn fill,void *ctx) {
-  s_fill_accelerator=fill;s_fill_context=ctx;
-}
 #ifdef _MSC_VER
 #include <windows.h>
 typedef volatile LONG refs_t;
@@ -862,10 +857,6 @@ static void paint(render_t *v, uint32_t op, const uint8_t *p,
     return;
   }
   if (!v->reference && (op == TINYRT_GFX_CLEAR || op == TINYRT_GFX_RECT)) {
-    if (alpha == 255 && s_fill_accelerator &&
-        s_fill_accelerator(s_fill_context,v->dst,v->stride,v->rows,
-                          (uint32_t)x0,(uint32_t)(y0-(int)v->y),
-                          (uint32_t)(x1-x0),(uint32_t)(y1-y0),color)) return;
     for (int yy = y0; yy < y1; yy++) {
       uint16_t *row = v->dst + (uint32_t)(yy - (int)v->y) * v->stride;
       if (alpha == 255) {

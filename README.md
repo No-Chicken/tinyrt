@@ -1,4 +1,4 @@
-# TinyRT core 0.1.0
+# TinyRT core 0.0.4
 
 TinyRT validates signed application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the

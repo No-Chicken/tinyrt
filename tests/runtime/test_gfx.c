@@ -206,6 +206,28 @@ int main(void) {
  CHECK(!tinyrt_gfx_texture_upload(&r,0,1,2,3,six,6));memset(&frame,0,sizeof(frame));frame.gfx_resources=r;tinyrt_gfx_resources_retain(r);frame.gfx_scale=1;
  uint32_t batch[]={0x003c0008,0,1,1,1,0,2,0,0,1,0,2,0,0,1};memcpy(frame.gfx_records,batch,60);frame.gfx_bytes=60;
  CHECK(!tinyrt_gfx_render_strip(&frame,out,4,4,4,0,4,NULL,NULL));CHECK(out[0]==0xf800 && out[1]==0 && out[2]==0x7e0);
+ /* Batched overlap, negative coordinates, clipping, transforms and strips
+  * must match the scalar renderer for both indexed and RGB565 textures. */
+ for(unsigned format=1;format<=2;format++){
+  if(format==2){const uint8_t rgb[]={0,0,0,248,224,7,31,0,255,255,31,248};
+   tinyrt_frame_release(&frame);CHECK(!tinyrt_gfx_texture_upload(&r,0,2,2,3,rgb,12));frame.gfx_resources=r;tinyrt_gfx_resources_retain(r);}
+  for(unsigned trial=0;trial<96;trial++){
+   uint32_t b[]={0x003c0008,0,2,3,trial%32,0,2,(uint32_t)((int)(trial%7)-3),(uint32_t)((int)(trial%5)-2),0,0,1,1,0,0};
+   memcpy(frame.gfx_records,b,60);frame.gfx_bytes=60;frame.gfx_scale=1+trial/32;
+   for(unsigned i=0;i<23*19;i++)fast[i]=slow[i]=strips[i]=(uint16_t)(0x4000u+i);
+   CHECK(!tinyrt_gfx_render_strip(&frame,fast,23,23,19,0,19,NULL,NULL));
+   CHECK(!tinyrt_gfx_render_reference_strip(&frame,slow,23,23,19,0,19,NULL,NULL));CHECK(!memcmp(fast,slow,sizeof(fast)));
+   for(unsigned row=0;row<19;row++)CHECK(!tinyrt_gfx_render_strip(&frame,strips+row*23,23,23,19,row,1,NULL,NULL));
+   CHECK(!memcmp(strips,slow,sizeof(strips)));
+   tinyrt_gfx_render_context_t prepared;
+   CHECK(!tinyrt_gfx_render_context_begin(&prepared,&frame,23,19));
+   for(unsigned i=0;i<23*19;i++)strips[i]=(uint16_t)(0x4000u+i);
+   for(unsigned row=0;row<19;row++)CHECK(!tinyrt_gfx_render_context_region(&prepared,strips+row*23,23,0,row,23,1,NULL,NULL));
+   CHECK(!memcmp(strips,slow,sizeof(strips)));
+   CHECK(tinyrt_gfx_render_context_region(&prepared,strips,23,23,0,1,1,NULL,NULL)==-1);
+  }
+ }
+ tinyrt_frame_release(&frame);CHECK(!tinyrt_gfx_texture_upload(&r,0,1,2,3,six,6));frame.gfx_resources=r;tinyrt_gfx_resources_retain(r);frame.gfx_scale=1;
  uint32_t tile[]={0x0034000a,0,0,2,2,1,1,0,0,0,1,0,0x04030201};memcpy(frame.gfx_records,tile,52);frame.gfx_bytes=52;
  CHECK(!tinyrt_gfx_render_strip(&frame,out,4,4,4,0,4,NULL,NULL));CHECK(out[0]==0xf800 && out[1]==0x7e0 && out[4]==31 && out[5]==0);
  uint32_t round[]={0x001c0003,0,0,4,4,2,0xffff};memcpy(frame.gfx_records,round,28);frame.gfx_bytes=28;
@@ -217,6 +239,8 @@ int main(void) {
  /* Mutate every byte of a valid batch; malformed sizes cannot overread. */
  uint8_t seed[60];memcpy(seed,batch,60);for(unsigned at=0;at<60;at++)for(unsigned val=0;val<256;val+=17){memcpy(frame.gfx_records,seed,60);frame.gfx_records[at]=(uint8_t)val;frame.gfx_bytes=60;
  int valid=tinyrt_gfx_validate(frame.gfx_records,60,r,&n,&e);if(!valid){int result=tinyrt_gfx_render_strip(&frame,out,4,4,4,0,4,NULL,NULL);CHECK(result==0 || result==-1);}else CHECK(valid==-1 || valid==-2);}
+ uint8_t unaligned_batch[64];for(unsigned offset=0;offset<4;offset++){
+  memcpy(unaligned_batch+offset,batch,60);CHECK(!tinyrt_gfx_validate(unaligned_batch+offset,60,r,&n,&e));}
  tinyrt_frame_release(&frame);tinyrt_gfx_resources_release(r);CHECK(tinyrt_gfx_memory_used()==0);
  puts("gfx pixels, validation, rotation, blending, damage, work bound and snapshots passed");return 0;
 }

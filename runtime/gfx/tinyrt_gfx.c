@@ -373,19 +373,16 @@ int tinyrt_gfx_validate(const void *data, uint32_t len,
     case TINYRT_GFX_SPRITE_BATCH:
       /* tex,sw,sh,flags,pal,count followed by count*(x,y,u,v), no scaling. */
       if (sz < 28 || !r || u32(p) >= 32 || !r->textures[u32(p)] ||
-          !u32(p + 4) || !u32(p + 8) || (u32(p + 12) & ~31u) || !u32(p + 20) ||
+          !u32(p + 4) || u32(p + 4)>32767 || !u32(p + 8) || u32(p + 8)>32767 || (u32(p + 12) & ~31u) || !u32(p + 20) ||
           u32(p + 20) > 1024 || sz != 28 + 16 * u32(p + 20))
         return -1;
+      if(r->textures[u32(p)]->format!=2 && !pal(r,u32(p+16)))return -1;
       for (uint32_t j = 0; j < u32(p + 20); j++) {
-        uint8_t q[48] = {0};
         const uint8_t *v = p + 24 + 16 * j;
-        memcpy(q, v, 8);
-        memcpy(q + 8, p + 4, 8);
-        memcpy(q + 16, p, 4);
-        memcpy(q + 20, v + 8, 8);
-        memcpy(q + 28, p + 4, 8);
-        memcpy(q + 36, p + 12, 8);
-        if (!sprite(q, r))
+        const texture_t *t=r->textures[u32(p)];
+        uint32_t u=u32(v+8),top=u32(v+12);
+        if (!coord(u32(v)) || !coord(u32(v+4)) || u>t->w || top>t->h ||
+            u32(p+4)>t->w-u || u32(p+8)>t->h-top)
           return -1;
       }
       break;
@@ -790,6 +787,41 @@ static int paint_sprite(render_t *v, uint32_t op, const uint8_t *p) {
   }
   return 1;
 }
+/* Validated unscaled batches can read their shared texture directly. Reject
+ * transformed batches so the scalar path remains the reference fallback. */
+static int paint_batch_unscaled(render_t *v, const uint8_t *p) {
+  if (v->reference || v->scale != 1 || (u32(p + 12) & ~1u)) return 0;
+  const texture_t *t = v->resources->textures[u32(p)];
+  const uint16_t *pal = t->format == 1 ? v->resources->palettes[u32(p + 16)] : NULL;
+  int w = (int)u32(p + 4), h = (int)u32(p + 8);
+  int clip_x0 = max_i(0, v->clip.x),
+      clip_x1 = min_i((int)v->width, v->clip.x + v->clip.w),
+      clip_y0 = max_i((int)v->y, v->clip.y),
+      clip_y1 = min_i((int)(v->y + v->rows), v->clip.y + v->clip.h);
+  for (uint32_t i = 0; i < u32(p + 20); i++) {
+    const uint8_t *a = p + 24 + 16 * i;
+    int x = (int32_t)u32(a), y = (int32_t)u32(a + 4);
+    int x0 = max_i(x, clip_x0), x1 = min_i(x + w, clip_x1),
+        y0 = max_i(y, clip_y0), y1 = min_i(y + h, clip_y1);
+    if (x1 <= x0 || y1 <= y0) continue;
+    uint32_t base = u32(a + 12) * t->w + u32(a + 8);
+    for (int yy = y0; yy < y1; yy++) {
+      uint32_t at = base + (uint32_t)(yy - y) * t->w + (uint32_t)(x0 - x);
+      uint16_t *dst = v->dst + (uint32_t)(yy - (int)v->y) * v->stride + x0;
+      if (t->format == 1) {
+        const uint8_t *src = t->data + at;
+        if (u32(p + 12) & 1) {
+          for (int xx = 0; xx < x1 - x0; xx++) if (src[xx]) dst[xx] = pal[src[xx]];
+        } else {
+          for (int xx = 0; xx < x1 - x0; xx++) dst[xx] = pal[src[xx]];
+        }
+      } else {
+        memcpy(dst, t->data + 2 * at, (uint32_t)(x1 - x0) * 2);
+      }
+    }
+  }
+  return 1;
+}
 static void paint(render_t *v, uint32_t op, const uint8_t *p,
                   const uint8_t *extra) {
   if (!v->reference &&
@@ -1019,17 +1051,17 @@ static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
                              uint32_t stride, uint32_t width, uint32_t height,
                              uint32_t x, uint32_t y, uint32_t region_width,
                              uint32_t rows, tinyrt_gfx_text_fn text,
-                             void *ctx, int reference) {
+                             void *ctx, int reference, int validated) {
   if (!f || !dst || !width || !height || width > 32767 || height > 32767 ||
       stride < width || x > width || region_width > width - x || !region_width ||
       y > height || rows > height - y || !rows ||
       f->gfx_bytes > TINYRT_GFX_MAX_BYTES)
     return -1;
-  if (f->gfx_bytes && (f->gfx_scale < 1 || f->gfx_scale > 3 ||
+  if (!validated && f->gfx_bytes && (f->gfx_scale < 1 || f->gfx_scale > 3 ||
                        tinyrt_gfx_validate(f->gfx_records, f->gfx_bytes,
                                            f->gfx_resources, NULL, NULL)))
     return -1;
-  if (f->gfx_bytes &&
+  if (!validated && f->gfx_bytes &&
       tinyrt_gfx_work(f->gfx_records, f->gfx_bytes, width, height,
                       f->gfx_scale) > (uint64_t)width * height * 8u)
     return -1;
@@ -1068,7 +1100,7 @@ static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
     } else if (op == TINYRT_GFX_SET_PAL) { /* Palette is explicit per record for
                                               atomic validation. */
     } else if (op == TINYRT_GFX_SPRITE_BATCH) {
-      for (uint32_t j = 0; j < u32(p + 20); j++) {
+      if (!paint_batch_unscaled(&v, p)) for (uint32_t j = 0; j < u32(p + 20); j++) {
         uint8_t q[48] = {0};
         const uint8_t *a = p + 24 + 16 * j;
         memcpy(q, a, 8);
@@ -1190,20 +1222,20 @@ int tinyrt_gfx_framebuffer_patch(tinyrt_gfx_resources_t **rp, uint32_t slot,
 int tinyrt_gfx_render_strip(const tinyrt_frame_t *f, uint16_t *p,
                             uint32_t stride, uint32_t w, uint32_t h, uint32_t y,
                             uint32_t rows, tinyrt_gfx_text_fn text, void *ctx) {
-  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 0);
+  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 0, 0);
 }
 int tinyrt_gfx_render_reference_strip(const tinyrt_frame_t *f, uint16_t *p,
                                       uint32_t stride, uint32_t w, uint32_t h,
                                       uint32_t y, uint32_t rows,
                                       tinyrt_gfx_text_fn text, void *ctx) {
-  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 1);
+  return render_region_impl(f, p, stride, w, h, 0, y, w, rows, text, ctx, 1, 0);
 }
 int tinyrt_gfx_render_region(const tinyrt_frame_t *f, uint16_t *p,
                              uint32_t stride, uint32_t w, uint32_t h,
                              uint32_t x, uint32_t y, uint32_t region_width,
                              uint32_t rows, tinyrt_gfx_text_fn text, void *ctx) {
   return render_region_impl(f, p, stride, w, h, x, y, region_width, rows,
-                            text, ctx, 0);
+                            text, ctx, 0, 0);
 }
 int tinyrt_gfx_render_reference_region(const tinyrt_frame_t *f, uint16_t *p,
                                        uint32_t stride, uint32_t w, uint32_t h,
@@ -1211,5 +1243,21 @@ int tinyrt_gfx_render_reference_region(const tinyrt_frame_t *f, uint16_t *p,
                                        uint32_t region_width, uint32_t rows,
                                        tinyrt_gfx_text_fn text, void *ctx) {
   return render_region_impl(f, p, stride, w, h, x, y, region_width, rows,
-                            text, ctx, 1);
+                            text, ctx, 1, 0);
+}
+int tinyrt_gfx_render_context_begin(tinyrt_gfx_render_context_t *c,
+                                  const tinyrt_frame_t *f,uint32_t w,uint32_t h){
+  if(!c)return -1;
+  memset(c,0,sizeof(*c));
+  if(!f||!w||!h||w>32767||h>32767||f->gfx_bytes>TINYRT_GFX_MAX_BYTES)return -1;
+  if(f->gfx_bytes && (f->gfx_scale<1||f->gfx_scale>3||
+      tinyrt_gfx_validate(f->gfx_records,f->gfx_bytes,f->gfx_resources,NULL,NULL)||
+      tinyrt_gfx_work(f->gfx_records,f->gfx_bytes,w,h,f->gfx_scale)>(uint64_t)w*h*8u))return -1;
+  c->frame=f;c->width=w;c->height=h;c->state=0x47584631u;return 0;
+}
+int tinyrt_gfx_render_context_region(const tinyrt_gfx_render_context_t *c,
+    uint16_t *p,uint32_t stride,uint32_t x,uint32_t y,uint32_t w,uint32_t rows,
+    tinyrt_gfx_text_fn text,void *ctx){
+  if(!c||c->state!=0x47584631u||!c->frame)return -1;
+  return render_region_impl(c->frame,p,stride,c->width,c->height,x,y,w,rows,text,ctx,0,1);
 }

@@ -68,9 +68,20 @@ int tinyrt_gfx_validate(const void *,uint32_t,const tinyrt_gfx_resources_t *,uin
 /* Conservative physical pixel visits, called after validation. */
 uint64_t tinyrt_gfx_work(const void *,uint32_t,uint32_t,uint32_t,uint32_t);
 struct tinyrt_frame;
+/* Host-owned immutable frame lease. The caller must retain the frame and its
+ * resource snapshot, without mutating either, through the last region call.
+ * Begin validates records and the work limit once; destination bounds remain
+ * checked on every region. Never persist this context after releasing a frame. */
+typedef struct {
+ const struct tinyrt_frame *frame;
+ uint32_t width,height,state;
+} tinyrt_gfx_render_context_t;
 typedef void (*tinyrt_gfx_text_fn)(void *ctx,uint16_t *pixels,uint32_t stride,
  uint32_t width,uint32_t height,uint32_t strip_y,uint32_t strip_rows,
  const tinyrt_gfx_text_t *,const char *,const tinyrt_gfx_damage_t *clip,uint32_t scale);
+int tinyrt_gfx_render_context_begin(tinyrt_gfx_render_context_t *,const struct tinyrt_frame *,uint32_t width,uint32_t height);
+int tinyrt_gfx_render_context_region(const tinyrt_gfx_render_context_t *,uint16_t *,uint32_t stride,
+ uint32_t x,uint32_t y,uint32_t region_width,uint32_t rows,tinyrt_gfx_text_fn,void *);
 /* Existing strip pixels are the base for KEEP_PREVIOUS; otherwise clear black.
  * Writes only the strip. Host font callback shares the same clip/scale. */
 int tinyrt_gfx_render_strip(const struct tinyrt_frame *,uint16_t *,uint32_t stride,

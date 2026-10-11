@@ -128,7 +128,9 @@ directory structure may still require selecting an older valid directory.
 
 The only package format is 1: `TRPKG001`, a 256-byte header and canonical
 16-byte section records for Wasm, optional trusted AOT, and resources. Store
-format and BLE metadata schema are also 1. Firmware/SDK version is 0.1.0.
+format and BLE metadata schema are also 1. The core version comes from
+[VERSION](VERSION); product firmware and SDK versions are managed independently
+in their own repositories.
 Older internal package and directory layouts are incompatible and must be
 rebuilt/reprovisioned through the product deployment flow. See [package](specs/package.md).
 

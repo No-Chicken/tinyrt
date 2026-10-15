@@ -38,6 +38,11 @@ TINYRT_IMPORT(gfx_tex_free) int32_t gfx_tex_free(uint32_t slot);
 TINYRT_IMPORT(gfx_tex_update_rows) int32_t gfx_tex_update_rows(uint32_t slot,uint32_t y,uint32_t rows,const void *source,uint32_t length);
 TINYRT_IMPORT(gfx_tex_upload) int32_t gfx_tex_upload(uint32_t slot,uint32_t format,uint32_t w,uint32_t h,const void *source,uint32_t length,uint32_t flags);
 /* INPUT=2, init only, lifecycle0x38/userkey0x40/motion0x80; zero legacy release. */
+/* HAPTIC=32, init/event only. Strength1..100%, duration1..2000ms.
+ * Nonblocking; new pulse replaces old. 0 accepted,1 unavailable; invalid use traps.
+ * Host stops active output when the application ends. */
+TINYRT_IMPORT(haptic_pulse) int32_t haptic_pulse(uint32_t strength,uint32_t duration_ms);
+TINYRT_IMPORT(haptic_stop) int32_t haptic_stop(void);
 TINYRT_IMPORT(input_events) int32_t input_events(uint32_t mask);
 TINYRT_IMPORT(kv_get) int32_t kv_get(uint32_t key,int32_t fallback);
 TINYRT_IMPORT(kv_set) int32_t kv_set(uint32_t key,int32_t value);

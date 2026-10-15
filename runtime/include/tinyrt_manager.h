@@ -17,6 +17,15 @@ typedef struct {
     tinyrt_status_t (*play)(void *,const void *,uint32_t length,uint32_t sample_rate);
     void (*stop)(void *);
 } tinyrt_manager_audio_t;
+/* Adapter schedules bounded pulses without blocking. Stop must cancel active
+ * output; manager calls it on normal stop, faults and close. */
+typedef struct {
+    void *ctx;
+    tinyrt_status_t (*pulse)(void *,uint32_t strength,uint32_t duration_ms);
+    tinyrt_status_t (*stop)(void *);
+} tinyrt_manager_haptic_t;
+tinyrt_status_t tinyrt_manager_set_haptic(tinyrt_manager_t *,const tinyrt_manager_haptic_t *);
+
 typedef struct { uint64_t init_us,event_us,render_us; uint32_t init_calls,event_calls,render_calls; } tinyrt_manager_perf_t;
 /* Optional monotonic microsecond clock, serialized owner only. Set before start.
  * Getter is cumulative and follows the event/render export boundaries exactly.

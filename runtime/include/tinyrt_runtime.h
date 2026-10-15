@@ -10,6 +10,7 @@ extern "C" {
 #define TINYRT_FRAME_MAX_PIXEL_BYTES (256u * 240u * 2u)
 #define TINYRT_AUDIO_MAX_BYTES 32000u
 #define TINYRT_AUDIO_SAMPLE_RATE 16000u
+#define TINYRT_HAPTIC_MAX_DURATION_MS 2000u
 #define TINYRT_DEFAULT_CLOCK_INTERVAL_MS 100u
 #define TINYRT_RUNTIME_HEAP_LIMIT (2u * 1024u * 1024u)
 typedef struct tinyrt_runtime tinyrt_runtime_t;
@@ -59,6 +60,9 @@ typedef struct {
     /* Must validate the current resource range and own any queued copy.
      * BUSY means dropped/unavailable without poisoning the guest. */
     tinyrt_status_t (*audio_play)(void *,uint32_t offset,uint32_t length,uint32_t sample_rate);
+    /* Optional nonblocking haptics; BUSY means unavailable. */
+    tinyrt_status_t (*haptic_pulse)(void *,uint32_t strength,uint32_t duration_ms);
+    tinyrt_status_t (*haptic_stop)(void *);
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

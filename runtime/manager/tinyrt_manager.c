@@ -18,6 +18,7 @@ struct tinyrt_manager {
     uint64_t (*perf_now)(void *);
     tinyrt_manager_perf_t perf;
     tinyrt_manager_audio_t audio;
+    tinyrt_manager_haptic_t haptic;
     uint8_t *audio_buffer;
     tinyrt_app_info_t running;
     uint32_t resource_offset,resource_size;
@@ -81,6 +82,7 @@ static void destroy_runtime(tinyrt_manager_t *m) {
     if (!m)
         return;
     if (m->runtime && m->audio.stop) m->audio.stop(m->audio.ctx);
+    if (m->runtime && m->haptic.stop) (void)m->haptic.stop(m->haptic.ctx);
     free(m->audio_buffer);m->audio_buffer=NULL;
     tinyrt_runtime_destroy(m->runtime);
     m->runtime = NULL;
@@ -108,6 +110,13 @@ tinyrt_status_t tinyrt_manager_set_audio(tinyrt_manager_t *m,const tinyrt_manage
     if (m->runtime) return TINYRT_BUSY;
     if(audio)m->audio=*audio;
     else memset(&m->audio,0,sizeof(m->audio));
+    return TINYRT_OK;
+}
+tinyrt_status_t tinyrt_manager_set_haptic(tinyrt_manager_t *m,const tinyrt_manager_haptic_t *haptic) {
+    if (!m || (haptic && (!haptic->pulse || !haptic->stop))) return TINYRT_INVALID_ARGUMENT;
+    if (m->runtime) return TINYRT_BUSY;
+    if (haptic) m->haptic=*haptic;
+    else memset(&m->haptic,0,sizeof(m->haptic));
     return TINYRT_OK;
 }
 static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
@@ -382,6 +391,14 @@ static tinyrt_status_t host_resource(void *ctx,uint32_t off,void *bytes,uint32_t
     }
     return tinyrt_store_read(m->store,&m->running.id,m->resource_offset+off,bytes,length);
 }
+static tinyrt_status_t host_haptic_pulse(void *ctx,uint32_t strength,uint32_t duration_ms) {
+    tinyrt_manager_t *m=ctx;
+    return m->haptic.pulse ? m->haptic.pulse(m->haptic.ctx,strength,duration_ms) : TINYRT_BUSY;
+}
+static tinyrt_status_t host_haptic_stop(void *ctx) {
+    tinyrt_manager_t *m=ctx;
+    return m->haptic.stop ? m->haptic.stop(m->haptic.ctx) : TINYRT_BUSY;
+}
 static tinyrt_status_t host_audio(void *ctx,uint32_t off,uint32_t length,uint32_t rate) {
     tinyrt_manager_t *m=ctx;
     if (!length || length>TINYRT_AUDIO_MAX_BYTES || (length&1u) || rate!=TINYRT_AUDIO_SAMPLE_RATE ||
@@ -468,7 +485,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {

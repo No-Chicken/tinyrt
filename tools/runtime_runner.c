@@ -176,7 +176,7 @@ int main(int argc, char **argv) {
         if (i+1>=argc || !parse_u32(argv[i+1],&value)) return usage();
         if (!strcmp(argv[i],"--pages") && value>=1 && value<=16) policy.max_memory_pages=value;
         else if (!strcmp(argv[i],"--budget") && value>=1 && value<=100000) policy.instruction_budget=value;
-        else if (!strcmp(argv[i],"--permissions") && value<=31) policy.permissions=value;
+        else if (!strcmp(argv[i],"--permissions") && value<=TINYRT_PERMISSION_ALL) policy.permissions=value;
         else return usage();
     }
     FILE *f=fopen(argv[1],"rb");
@@ -190,7 +190,7 @@ int main(int argc, char **argv) {
     if (count!=(size_t)length || close_result) { free(bytes); return 2; }
     int exit_code=0;
     if (tinyrt_runtime_system_init()!=TINYRT_OK) { free(bytes); return 1; }
-    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio};
+    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL};
     tinyrt_runtime_t *rt=NULL;
     tinyrt_status_t result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
     if (result!=TINYRT_OK) { emit("create",result,"Wasm load rejected",0); exit_code=1; goto done; }

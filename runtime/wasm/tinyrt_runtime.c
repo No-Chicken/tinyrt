@@ -316,6 +316,28 @@ static int32_t audio_play(wasm_exec_env_t e,uint32_t offset,uint32_t length,uint
     if (result!=TINYRT_OK) return fail(r,"audio resource range or host failed");
     return 0;
 }
+static int32_t haptic_pulse(wasm_exec_env_t e,uint32_t strength,uint32_t duration_ms)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_HAPTIC)) return -1;
+    if (r->callback>1 || !strength || strength>100 || !duration_ms ||
+        duration_ms>TINYRT_HAPTIC_MAX_DURATION_MS)
+        return fail(r,"haptic callback, strength or duration invalid");
+    if (!r->host.haptic_pulse) return 1;
+    tinyrt_status_t result=r->host.haptic_pulse(r->host.ctx,strength,duration_ms);
+    if (result==TINYRT_BUSY) return 1;
+    return result==TINYRT_OK ? 0 : fail(r,"haptic host failed");
+}
+static int32_t haptic_stop(wasm_exec_env_t e)
+{
+    tinyrt_runtime_t *r=context(e);
+    if (!permission(r,TINYRT_PERMISSION_HAPTIC)) return -1;
+    if (r->callback>1) return fail(r,"haptic stop callback invalid");
+    if (!r->host.haptic_stop) return 1;
+    tinyrt_status_t result=r->host.haptic_stop(r->host.ctx);
+    if (result==TINYRT_BUSY) return 1;
+    return result==TINYRT_OK ? 0 : fail(r,"haptic stop host failed");
+}
 static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
 {
     tinyrt_runtime_t *r=context(e);
@@ -382,14 +404,16 @@ static NativeSymbol natives[] = {
     { "gfx_tex_free", (void *)gfx_tex_free, "(i)i", NULL },
     { "gfx_tex_update_rows", (void *)gfx_tex_update_rows, "(iiiii)i", NULL },
     { "gfx_tex_upload", (void *)gfx_tex_upload, "(iiiiiii)i", NULL },
+    { "haptic_pulse", (void *)haptic_pulse, "(ii)i", NULL },
+    { "haptic_stop", (void *)haptic_stop, "()i", NULL },
     { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL },
     { "runtime_backend", (void *)runtime_backend, "()i", NULL }
 };
-static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 1, 2, 2, 0, 0 };
-static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 2, 4, 4, 8, 0 };
+static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 1, 2, 2, 0, 0 };
+static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 2, 4, 4, 8, 0 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 

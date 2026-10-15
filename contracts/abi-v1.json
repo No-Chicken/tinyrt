@@ -118,6 +118,16 @@
       "permission": 1
     },
     {
+      "name": "haptic_pulse",
+      "signature": "(ii)i",
+      "permission": 32
+    },
+    {
+      "name": "haptic_stop",
+      "signature": "()i",
+      "permission": 32
+    },
+    {
       "name": "input_events",
       "signature": "(i)i",
       "permission": 2
@@ -284,5 +294,14 @@
       "render"
     ],
     "atomic": "invalid record rejects complete render frame; prior display retained"
+  },
+  "haptic": {
+    "max_strength": 100,
+    "max_duration_ms": 2000,
+    "stages": [
+      "init",
+      "event"
+    ],
+    "replacement": true
   }
 }

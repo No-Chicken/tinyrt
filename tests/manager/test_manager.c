@@ -23,6 +23,7 @@ extern int metadata_aot;
 extern int metadata_cover;
 extern int metadata_audio;
 extern int runtime_audio;
+extern int runtime_haptic;
 extern unsigned runtime_aot_creates;
 extern int cache_fail_alloc;
 extern unsigned cache_live_allocations;
@@ -51,6 +52,29 @@ static tinyrt_app_info_t install(tinyrt_manager_t*m,uint32_t version) {
  CHECK(tinyrt_manager_begin(m,&a)==TINYRT_OK);
  CHECK(tinyrt_manager_write(m,package,sizeof(package))==TINYRT_OK);
  CHECK(tinyrt_manager_finish(m)==TINYRT_OK);return a;
+}
+static unsigned haptic_pulses,haptic_stops;
+static tinyrt_status_t haptic_reply;
+static tinyrt_status_t pulse(void *ctx,uint32_t strength,uint32_t duration_ms) {
+ (void)ctx;CHECK(strength==50 && duration_ms==100);++haptic_pulses;return haptic_reply;
+}
+static tinyrt_status_t stop_haptic(void *ctx){(void)ctx;++haptic_stops;return TINYRT_OK;}
+static void test_haptic_lifecycle(void) {
+ fake_nor_init(&nor);tinyrt_manager_t *m=open_manager();runtime_haptic=1;
+ tinyrt_manager_haptic_t adapter={NULL,pulse,stop_haptic};
+ CHECK(tinyrt_manager_set_haptic(m,&adapter)==TINYRT_OK);
+ tinyrt_app_info_t a=install(m,1);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ CHECK(tinyrt_manager_set_haptic(m,NULL)==TINYRT_BUSY);
+ CHECK(tinyrt_manager_event(m,1,50,100,0,&frame)==TINYRT_OK && haptic_pulses==1);
+ CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_OK && haptic_stops==1);
+ CHECK(tinyrt_manager_stop(m)==TINYRT_OK && haptic_stops==2);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ haptic_reply=TINYRT_IO_ERROR;
+ CHECK(tinyrt_manager_event(m,1,50,100,0,&frame)==TINYRT_IO_ERROR && haptic_stops==3);
+ CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK);
+ tinyrt_manager_close(m);CHECK(haptic_stops==4);
+ runtime_haptic=0;haptic_reply=TINYRT_OK;
 }
 static unsigned audio_plays,audio_stops;
 static tinyrt_status_t audio_play(void *ctx,const void *bytes,uint32_t length,uint32_t rate) {
@@ -363,6 +387,7 @@ int main(void) {
  CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_VERIFY_FAILED&&count==0);metadata_swap=0;
  tinyrt_manager_close(m);m=open_manager();tinyrt_app_info_t out;
  CHECK(tinyrt_manager_query(m,&b.id,&out)==TINYRT_OK);tinyrt_manager_close(m);
+ test_haptic_lifecycle();
  test_audio_resource_scope_and_stop();
  test_cover_ranges_and_identity();
  test_aot_selection();

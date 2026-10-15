@@ -7,6 +7,13 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class ContractTests(unittest.TestCase):
+    def test_bounded_haptic_contract(self):
+        spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
+        self.assertIn({'name':'haptic_pulse','signature':'(ii)i','permission':32},spec['imports'])
+        self.assertIn({'name':'haptic_stop','signature':'()i','permission':32},spec['imports'])
+        self.assertEqual(spec['haptic']['max_duration_ms'],2000)
+        self.assertEqual(spec['haptic']['stages'],['init','event'])
+
     def test_bounded_audio_contract(self):
         spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
         self.assertIn({'name':'audio_play','signature':'(iii)i','permission':16},spec['imports'])

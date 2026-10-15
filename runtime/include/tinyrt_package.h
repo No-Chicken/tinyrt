@@ -13,7 +13,8 @@ extern "C" {
 #define TINYRT_PERMISSION_STORAGE 4u
 #define TINYRT_PERMISSION_CLOCK 8u
 #define TINYRT_PERMISSION_AUDIO 16u
-#define TINYRT_PERMISSION_ALL 31u
+#define TINYRT_PERMISSION_HAPTIC 32u
+#define TINYRT_PERMISSION_ALL 63u
 typedef struct {
     uint32_t abi_version, permissions, max_memory_pages, instruction_budget;
 } tinyrt_package_policy_t;

@@ -89,8 +89,8 @@ frame and `pixels_hex` for desktop PNG review; `time` and `pointer` support inpu
 
 Current storage is an immutable package store plus sixteen i32 values per app.
 `asset_read(offset, ptr, len)` reads authenticated current-package resources in
-init/event, at most 4096 bytes per call. There is no private file filesystem yet. The store supports 16 apps and 2 MiB complete packages in
-0x4E0000 bytes, with two 4 KiB directory sectors and variable contiguous extents.
+init/event, at most 4096 bytes per call. There is no private file filesystem yet. The store supports 16 apps in a default
+0x4E0000-byte region (hosts override `TINYRT_STORE_SIZE`); one package may use the whole data area, with two 4 KiB directory sectors and variable contiguous extents.
 Updates require separate free staging space; fragmentation or insufficient
 space returns NO_SPACE while preserving the committed version. See
 [store format 1](specs/store.md) for the incompatible media format and paging token.

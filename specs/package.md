@@ -1,6 +1,6 @@
 # TinyRT 应用包格式 1
 
-SDK 与固件版本为 0.1.0。当前唯一包格式为 1，使用 `.trpkg`，256 字节头后包含 section 表、Wasm、可选 AOT、resources 与 cover。完整包不得超过 2 MiB。旧内部直接载荷布局与旧内部 section 格式号不兼容，旧包需用当前 SDK 重新构建。包元数据是受信发布方的声明，不能证明任意机器码具有边界检查或可取消性。
+SDK 与固件版本为 0.1.0。当前唯一包格式为 1，使用 `.trpkg`，256 字节头后包含 section 表、Wasm、可选 AOT、resources 与 cover。完整包不得超过目标宿主包库数据区（`TINYRT_STORE_SIZE` 减两个目录扇区），没有单独的单包上限；SDK 只做 16 MiB 格式健全性检查。旧内部直接载荷布局与旧内部 section 格式号不兼容，旧包需用当前 SDK 重新构建。包元数据是受信发布方的声明，不能证明任意机器码具有边界检查或可取消性。
 
 ## 头与 section 表
 
@@ -79,7 +79,7 @@ compat_id 为以下对象按 JSON `sort_keys=True,separators=(',',':')`、UTF-8 
 
 ## BLE 协商合同
 
-管理传输版本 1、逻辑消息上限 256 字节、status u16。HELLO 为 8 字节；bit6（64）声明 PACKAGE_SECTIONS 能力，当前包安装和详情查询要求此位。STORAGE 为 92 字节 schema 1，最大包长由 HELLO 与 STORAGE 共同报告，当前为 2097152。PREPARE/info72、QUERY、传输、卸载与原子提交保留既有身份字段。
+管理传输版本 1、逻辑消息上限 256 字节、status u16。HELLO 为 8 字节；bit6（64）声明 PACKAGE_SECTIONS 能力，当前包安装和详情查询要求此位。STORAGE 为 92 字节 schema 1，最大包长由 HELLO 与 STORAGE 共同报告，等于宿主包库数据区。PREPARE/info72、QUERY、传输、卸载与原子提交保留既有身份字段。
 
 `APP_INFO=0x1A` 只接受 `u16 schema=1 + identity68`（70 字节）；旧 68 字节请求和 164 字节回复已移除。成功回复不含 status 共 248 字节：
 
@@ -132,6 +132,6 @@ python tools/package.py development-public-key --output development-public.sec1
 | 20、22 | u16 side_width=150、side_height=150 |
 | 24、28 | u32 main_size=88200、side_size=45000 |
 
-所有字段必须精确匹配；未知 codec、重复 cover、非规范边界或尺寸均拒绝。cover 和 section 表共同受到原包签名及 payload SHA-256 保护，计入 2 MiB 整包限制。cover 不属于 Guest `resources`，不会改变 `asset_read` 相对偏移；它只供 Host 大厅与手机展示。没有 cover 时使用默认封面。
+所有字段必须精确匹配；未知 codec、重复 cover、非规范边界或尺寸均拒绝。cover 和 section 表共同受到原包签名及 payload SHA-256 保护，计入整包长度。cover 不属于 Guest `resources`，不会改变 `asset_read` 相对偏移；它只供 Host 大厅与手机展示。没有 cover 时使用默认封面。
 
 `tinyrt_package_metadata_t.cover` 提供经过认证的 package-relative offset、size、codec 与完整 cover section（包含 32 字节头）的 SHA-256。`tinyrt_manager_cover_query` 按完整应用 identity 查询；无 cover 返回 `TINYRT_NOT_FOUND`。`tinyrt_manager_cover_read` 以 cover-relative offset 精确读取 1..4096 字节，拒绝越界；安装期间返回 `TINYRT_BUSY`。API 遵循 manager 的单线程 owner 约束。

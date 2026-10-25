@@ -91,7 +91,10 @@ class ContractTests(unittest.TestCase):
                           store["record_package_offset"]), ("TRDIR001", 1, 80, 36))
         limits = spec["headers"]["runtime/include/tinyrt_store.h"]
         self.assertEqual(limits["TINYRT_STORE_SIZE"], 0x4e0000)
-        self.assertEqual(limits["TINYRT_STORE_MAX_PACKAGE_SIZE"], 0x200000)
+        # 单包上限由宿主 store 大小推导，不是独立常量。
+        self.assertNotIn("TINYRT_STORE_MAX_PACKAGE_SIZE", limits)
+        header = (ROOT / "runtime/include/tinyrt_store.h").read_text(encoding="utf-8")
+        self.assertIn("#define TINYRT_STORE_MAX_PACKAGE_SIZE ((uint32_t)(TINYRT_STORE_SIZE) - 2u * TINYRT_STORE_SECTOR_SIZE)", header)
         self.assertEqual(limits["TINYRT_STORE_MAX_APPS"], 16)
         self.assertLessEqual(32 + 16 * store["record_size"], 4088)
         page = spec["management"]["paged_list"]

@@ -22,7 +22,6 @@
     "runtime/include/tinyrt_store.h": {
       "TINYRT_STORE_SIZE": 5111808,
       "TINYRT_STORE_SECTOR_SIZE": 4096,
-      "TINYRT_STORE_MAX_PACKAGE_SIZE": 2097152,
       "TINYRT_STORE_MAX_APPS": 16
     },
     "protocol/tinyrt_transport.h": {
@@ -57,7 +56,7 @@
     "format_version": 1,
     "header_size": 256,
     "signature_domain_hex": "54696e7952542d7061636b6167652d763100",
-    "max_package_size": 2097152,
+    "max_package_size": "TINYRT_STORE_SIZE - 2 * TINYRT_STORE_SECTOR_SIZE; HELLO and STORAGE report the host value",
     "table_offset": 256,
     "entry_size": 16,
     "max_sections": 4,

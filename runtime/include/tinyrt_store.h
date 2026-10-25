@@ -8,7 +8,8 @@ extern "C" {
 #define TINYRT_STORE_SIZE UINT32_C(0x4E0000)
 #endif
 #define TINYRT_STORE_SECTOR_SIZE UINT32_C(0x1000)
-#define TINYRT_STORE_MAX_PACKAGE_SIZE UINT32_C(0x200000)
+/* 单包上限为整个数据区（总区减两个目录扇区），不再单独限制；更新仍需另一段连续空闲区暂存。 */
+#define TINYRT_STORE_MAX_PACKAGE_SIZE ((uint32_t)(TINYRT_STORE_SIZE) - 2u * TINYRT_STORE_SECTOR_SIZE)
 #define TINYRT_STORE_MAX_APPS 16u
 typedef struct tinyrt_store tinyrt_store_t;
 typedef struct tinyrt_install tinyrt_install_t;

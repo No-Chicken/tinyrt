@@ -310,8 +310,8 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_store_list_quarantined(healthy_store,quarantined,2,&count)==TINYRT_OK&&count==0);
     CHECK(nor.mutations==unavailable_mutations);
     tinyrt_store_close(healthy_store);
-    /* The signed limit includes assets; only its real Wasm section becomes
-     * guest memory. Exercise the whole maximum-size store/manager path. */
+    /* Assets count toward the package length; only its real Wasm section becomes
+     * guest memory. Exercise a large 2 MiB package through store/manager. */
     fake_nor_init(&nor);memset(records,0,sizeof(records));
     m=open_manager();
     tinyrt_app_info_t maximum=install(m,argv[1],"counter-maximum",TINYRT_OK);

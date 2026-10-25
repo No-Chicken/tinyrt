@@ -290,7 +290,7 @@ static void test_v2_structural_bounds_and_legacy_refusal(void) {
  CHECK(open_store(&s)==TINYRT_CORRUPT); /* Rounded extent overlaps record 2, not record 0. */
  a[1].package_size=300;a[2].id=a[1].id;directory(0,1,a,indices,3);
  CHECK(open_store(&s)==TINYRT_CORRUPT);
- a[2]=fixture(2,"c",1);a[2].package_size=0x200001;directory(0,1,a,indices,3);
+ a[2]=fixture(2,"c",1);a[2].package_size=TINYRT_STORE_MAX_PACKAGE_SIZE+1;directory(0,1,a,indices,3);
  CHECK(open_store(&s)==TINYRT_CORRUPT);
  fake_nor_init(&nor);directory(0,1,NULL,NULL,0);put32(nor.bytes+12,17);put32(nor.bytes+4088,crc32(nor.bytes,4088));
  CHECK(open_store(&s)==TINYRT_CORRUPT);
@@ -340,7 +340,7 @@ static void test_storage_stats_failures_and_staging(void) {
  CHECK(stats.total_bytes==0x4E0000&&stats.data_bytes==0x4DE000);
  CHECK(stats.free_bytes==0x4DE000&&stats.largest_free_bytes==0x4DE000);
  CHECK(stats.package_bytes==0&&stats.allocated_bytes==0&&stats.installed_count==0&&stats.quarantined_count==0);
- CHECK(stats.max_apps==16&&stats.max_package_size==0x200000&&!nor.mutations);
+ CHECK(stats.max_apps==16&&stats.max_package_size==TINYRT_STORE_SIZE-8192u&&!nor.mutations);
  memset(&stats,0xa5,sizeof(stats));
  CHECK(tinyrt_store_stats(NULL,&stats)==TINYRT_INVALID_ARGUMENT&&!memcmp(&stats,&zero,sizeof(stats)));
  CHECK(tinyrt_store_stats(s,NULL)==TINYRT_INVALID_ARGUMENT);

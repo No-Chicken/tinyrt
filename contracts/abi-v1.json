@@ -225,7 +225,15 @@
       128,
       184,
       192,
-      248
+      248,
+      256,
+      312,
+      320,
+      376,
+      384,
+      440,
+      448,
+      504
     ],
     "init_only": true,
     "press": 3,
@@ -252,6 +260,15 @@
       ],
       "axes": "raw sensor",
       "delivery": "opt-in, approximately 30 Hz; no stale samples"
+    },
+    "gamepad": {
+      "event": 8,
+      "mask": 256,
+      "x": "buttons, bit16..23 always 0",
+      "y": "LX|LY<<8|RX<<16|RY<<24, int8 each, +X right, +Y down",
+      "arg": "LT|RT<<8|flags<<16, flags bit0 CONNECTED",
+      "delivery": "opt-in, full state per event, button changes in order; HOME reserved by host",
+      "fallback": "older hosts reject 0x100; subscribe again without it"
     }
   },
   "resources": {

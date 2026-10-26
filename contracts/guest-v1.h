@@ -37,7 +37,7 @@ TINYRT_IMPORT(gfx_submit) int32_t gfx_submit(const void *records,uint32_t length
 TINYRT_IMPORT(gfx_tex_free) int32_t gfx_tex_free(uint32_t slot);
 TINYRT_IMPORT(gfx_tex_update_rows) int32_t gfx_tex_update_rows(uint32_t slot,uint32_t y,uint32_t rows,const void *source,uint32_t length);
 TINYRT_IMPORT(gfx_tex_upload) int32_t gfx_tex_upload(uint32_t slot,uint32_t format,uint32_t w,uint32_t h,const void *source,uint32_t length,uint32_t flags);
-/* INPUT=2, init only, lifecycle0x38/userkey0x40/motion0x80; zero legacy release. */
+/* INPUT=2, init only, lifecycle0x38/userkey0x40/motion0x80/gamepad0x100; zero legacy release. */
 /* HAPTIC=32, init/event only. Strength1..100%, duration1..2000ms.
  * Nonblocking; new pulse replaces old. 0 accepted,1 unavailable; invalid use traps.
  * Host stops active output when the application ends. */
@@ -62,8 +62,37 @@ TINYRT_IMPORT(runtime_backend) int32_t runtime_backend(void);
 /* MOTION: x=ax, y=ay, arg=az, signed mg in raw sensor axes, -16000..16000.
  * Opt in with INPUT permission; OR 0x80 into any existing subscription mask.
  * Sensor unavailable/stale means no event. Screen-axis mapping belongs to Guest. */
+#define TINYRT_EV_GAMEPAD 8
+#define TINYRT_IN_GAMEPAD 0x100u
+/* GAMEPAD: x=buttons (bit16..23 always 0), y=LX|LY<<8|RX<<16|RY<<24 (int8 each, +X right,
+ * +Y down), arg=LT|RT<<8|flags<<16, flags bit0 CONNECTED. Full state per event; accessory
+ * HOME is reserved by the host. Older firmware rejects 0x100: retry without it on failure. */
+#define TINYRT_PAD_A (1u<<0)
+#define TINYRT_PAD_B (1u<<1)
+#define TINYRT_PAD_X (1u<<2)
+#define TINYRT_PAD_Y (1u<<3)
+#define TINYRT_PAD_LB (1u<<4)
+#define TINYRT_PAD_RB (1u<<5)
+#define TINYRT_PAD_LT (1u<<6)
+#define TINYRT_PAD_RT (1u<<7)
+#define TINYRT_PAD_SELECT (1u<<8)
+#define TINYRT_PAD_START (1u<<9)
+#define TINYRT_PAD_L3 (1u<<10)
+#define TINYRT_PAD_R3 (1u<<11)
+#define TINYRT_PAD_UP (1u<<12)
+#define TINYRT_PAD_DOWN (1u<<13)
+#define TINYRT_PAD_LEFT (1u<<14)
+#define TINYRT_PAD_RIGHT (1u<<15)
+#define TINYRT_PAD_FN(n) (1u<<(23+(n)))
+#define TINYRT_PAD_LX(y) ((int8_t)((y)&0xff))
+#define TINYRT_PAD_LY(y) ((int8_t)(((y)>>8)&0xff))
+#define TINYRT_PAD_RX(y) ((int8_t)(((y)>>16)&0xff))
+#define TINYRT_PAD_RY(y) ((int8_t)(((uint32_t)(y)>>24)&0xff))
+#define TINYRT_PAD_LT_VALUE(a) ((a)&0xff)
+#define TINYRT_PAD_RT_VALUE(a) (((a)>>8)&0xff)
+#define TINYRT_PAD_CONNECTED(a) (((a)>>16)&1)
 /* USER_KEY_EVENT: x=1, y=1 pressed / 0 released, arg=0. Opt in during init.
- * Accept masks 0, 0x38, 0x40 or 0x78, optionally OR 0x80. CANCEL clears touch and keys. */
+ * Accept masks 0, 0x38, 0x40 or 0x78, optionally OR 0x80 and/or 0x100. CANCEL clears touch and keys. */
 /* Export these exact signatures. Return 0 on success. Each host call is bounded;
  * only render may draw, and every drawn frame starts with draw_clear. Text is UTF-8,
  * 1..63 bytes. Storage keys 0..15 contain signed 32-bit values; host scopes to app.

@@ -37,6 +37,25 @@ int main(void) {
         CHECK(tinyrt_runtime_event(r,7,0,0,16001)==TINYRT_INVALID_ARGUMENT);
         tinyrt_runtime_destroy(r);
     }
+    const char *gamepad[]={"input_gamepad_256","input_gamepad_312","input_gamepad_376","input_gamepad_384","input_gamepad_504"};
+    for(unsigned i=0;i<5;i++) {
+        r=create(gamepad[i],15,TINYRT_OK);if(!r)continue;
+        CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,8,0xFF00FFFF,(int32_t)0x81817F7Fu,0x1FFFF)==TINYRT_OK);
+        CHECK(tinyrt_runtime_render(r,&frame)==TINYRT_OK&&frame.commands[0].rgb==8);
+        CHECK(tinyrt_runtime_event(r,8,0,0,0)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,8,1<<16,0,1<<16)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,8,0x00800000,0,0)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,8,0,0,2<<16)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,8,0,0,-1)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,7,0,0,1000)==((i==3||i==4)?TINYRT_OK:TINYRT_INVALID_ARGUMENT));
+        tinyrt_runtime_destroy(r);
+    }
+    r=create("input_motion_248",15,TINYRT_OK);
+    if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+        CHECK(tinyrt_runtime_event(r,8,0,0,1<<16)==TINYRT_INVALID_ARGUMENT);
+        CHECK(tinyrt_runtime_event(r,9,0,0,0)==TINYRT_INVALID_ARGUMENT);
+        tinyrt_runtime_destroy(r);}
     for(unsigned i=0;i<2;i++){r=create(keys[i],15,TINYRT_OK);if(!r)continue;
         CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
         CHECK(tinyrt_runtime_event(r,6,1,1,0)==TINYRT_OK);
@@ -62,8 +81,9 @@ int main(void) {
 #endif
         CHECK(tinyrt_runtime_event(r,3,0,0,0)==TINYRT_INVALID_ARGUMENT);
         tinyrt_runtime_destroy(r);}
-    const char *bad[]={"input_bad_1","input_bad_8","input_bad_16","input_bad_32","input_bad_55","input_bad_65","input_bad_-1"};
-    for(unsigned i=0;i<7;++i){r=create(bad[i],15,TINYRT_OK);if(!r)continue;
+    const char *bad[]={"input_bad_1","input_bad_8","input_bad_16","input_bad_32","input_bad_55","input_bad_65",
+                       "input_bad_264","input_bad_512","input_bad_-1"};
+    for(unsigned i=0;i<9;++i){r=create(bad[i],15,TINYRT_OK);if(!r)continue;
         CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_VERIFY_FAILED);tinyrt_runtime_destroy(r);}
     const char *stages[]={"input_event","input_render","input_stop"};
     for(unsigned i=0;i<3;++i){r=create(stages[i],15,TINYRT_OK);if(!r)continue;

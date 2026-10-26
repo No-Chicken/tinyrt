@@ -73,9 +73,11 @@ def fixtures():
     result["input_key_only"]=guest(input_imports,input_render,init=code([64],1)+c(0),event=input_event)
     for mask in (128,184,192,248):
         result["input_motion_"+str(mask)]=guest(input_imports,input_render,init=code([mask],1)+c(0),event=input_event)
+    for mask in (256,312,376,384,504):
+        result["input_gamepad_"+str(mask)]=guest(input_imports,input_render,init=code([mask],1)+c(0),event=input_event)
     result["backend_classic"]=guest([("draw_clear",1),("runtime_backend",0)],call(1)+call(0)+b"\x1a"+c(0))
     result["input_disabled"]=guest(input_imports,input_render,init=code([0x38],1)+code([0],1)+c(0),event=input_event)
-    for mask in (1,8,16,32,55,65,-1):
+    for mask in (1,8,16,32,55,65,264,512,-1):
         result["input_bad_"+str(mask)]=guest(input_imports,clear+c(0),init=code([mask],1)+c(0))
     for stage in ("event","render","stop"):
         bodies={"event":c(0),"render":clear+c(0),"stop":c(0)}

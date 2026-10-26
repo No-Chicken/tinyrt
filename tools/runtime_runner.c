@@ -116,6 +116,12 @@ static int parse_mg(const char *s, int32_t *out) {
     if (errno || !end || *end || value < -16000 || value > 16000) return 0;
     *out=(int32_t)value; return 1;
 }
+static int parse_range(const char *s, long low, long high, int32_t *out) {
+    if (!s || !*s) return 0;
+    errno=0; char *end=NULL; long value=strtol(s,&end,10);
+    if (errno || !end || *end || value < low || value > high) return 0;
+    *out=(int32_t)value; return 1;
+}
 static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
                             int32_t kind, int32_t x, int32_t y, int32_t arg) {
     saved_t before=saved; double start=milliseconds();
@@ -153,6 +159,7 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
 static int usage(void) {
     fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..31] [--assets resources.bin]\n"
         "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1> | motion <ax_mg> <ay_mg> <az_mg>\n"
+        "       gamepad <buttons> <lx> <ly> <rx> <ry> <lt> <rt> <connected 0|1>\n"
         "       time <uint32_ms> | tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
         "advance uses the guest clock interval and monotonic virtual time; capture does not run callbacks.\n"
         "KV is RAM-only. stop/restart/EOF stop normally; reboot forces teardown.\n");
@@ -235,6 +242,19 @@ int main(int argc, char **argv) {
             if (!parse_mg(a,&ax) || !parse_mg(b,&ay) || !parse_mg(extra,&az) || strtok(NULL," \t\r\n")) { exit_code=usage();break; }
             if (rt && (!(policy.permissions&TINYRT_PERMISSION_INPUT) || !(tinyrt_runtime_input_events(rt)&128u))) continue;
             result=cycle(rt,"motion",0,7,ax,ay,az);
+        } else if (!strcmp(op,"gamepad")) {
+            /* gamepad <buttons> <lx> <ly> <rx> <ry> <lt> <rt> <connected>，与宿主打包方式相同。 */
+            int32_t v[7];uint32_t buttons;char *rest[5]={b,extra,NULL,NULL,NULL};
+            for(unsigned i=2;i<5;i++)rest[i]=strtok(NULL," \t\r\n");
+            int ok=parse_u32(a,&buttons) && !(buttons&0x00FF0000u);
+            for(unsigned i=0;ok && i<7;i++) {
+                char *token=i<5?rest[i]:strtok(NULL," \t\r\n");
+                ok=parse_range(token,i<4?-127:0,i<4?127:(i<6?255:1),&v[i]);
+            }
+            if (!ok || strtok(NULL," \t\r\n")) { exit_code=usage();break; }
+            if (rt && (!(policy.permissions&TINYRT_PERMISSION_INPUT) || !(tinyrt_runtime_input_events(rt)&256u))) continue;
+            int32_t sticks=(int32_t)((uint32_t)(uint8_t)v[0]|(uint32_t)(uint8_t)v[1]<<8|(uint32_t)(uint8_t)v[2]<<16|(uint32_t)(uint8_t)v[3]<<24);
+            result=cycle(rt,"gamepad",0,8,(int32_t)buttons,sticks,v[4]|v[5]<<8|v[6]<<16);
         } else if (!strcmp(op,"tick") && parse_u32(a,&x) && !b) {
             now_ms_value=x; int32_t signed_now; memcpy(&signed_now,&x,sizeof(x));
             result=cycle(rt,"tick",0,2,0,0,signed_now);

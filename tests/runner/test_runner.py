@@ -17,6 +17,20 @@ class Runner(unittest.TestCase):
         self.assertNotIn('motion',[item['phase'] for item in r])
         p,r=self.run_guest(guest,'motion 16001 0 0\n')
         self.assertNotEqual(p.returncode,0)
+    def test_gamepad_opt_in_and_packing_range(self):
+        guest=self.event_guest('gamepad_opt_in',256)
+        p,r=self.run_guest(guest,'gamepad 32769 -127 127 0 0 255 0 1\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertEqual(r[1]['phase'],'gamepad')
+        self.assertEqual(r[1]['frame'][0]['rgb'],264)
+        guest=self.event_guest('gamepad_unsubscribed',248)
+        p,r=self.run_guest(guest,'gamepad 1 0 0 0 0 0 0 1\ncapture\n')
+        self.assertEqual(p.returncode,0,p.stdout+p.stderr)
+        self.assertNotIn('gamepad',[item['phase'] for item in r])
+        for bad in ('gamepad 65536 0 0 0 0 0 0 1','gamepad 1 128 0 0 0 0 0 1',
+                    'gamepad 1 0 0 0 0 0 0 2','gamepad 1 0 0 0 0 0 0'):
+            p,r=self.run_guest(guest,bad+'\n')
+            self.assertNotEqual(p.returncode,0,bad)
     def event_guest(self, name, input_mask=None):
         sys.path.insert(0,str(ROOT/'tests/runtime'))
         from make_fixtures import c,call

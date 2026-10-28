@@ -75,6 +75,11 @@ def main(folder):
     output.write_bytes(encode(wasm,app_id="demo.maximum",title="Maximum package",version=1,
                              assets=b"\xa5"*(0x200000-((288+len(wasm)+3)&~3))))
     identity(output)
+    for name,version,guest in [('community-v2',2,'counter-v2'),('community-v2-alt',2,'counter-v1'),('community-v1',1,'counter-v1')]:
+        output=folder/(name+'.trpkg')
+        output.write_bytes(encode((ROOT/'tests/fixtures/guests'/(guest+'.wasm')).read_bytes(),
+                                 app_id='demo.counter',title=name,version=version,key_id=100,test_scalar=2))
+        identity(output)
     (folder/"publisher2.bin").write_bytes(ec.derive_private_key(2,ec.SECP256R1()).public_key().public_bytes(
         serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))
     print(f"INTEGRATION fixtures={len(jobs)+3} real P256 packages; public test key_ids=1,2")

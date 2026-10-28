@@ -105,7 +105,8 @@ static void test_quarantine_does_not_rollback_version(void) {
  CHECK(open_store(&s)==TINYRT_OK);
  CHECK(tinyrt_store_query(s,&old.id,&out)==TINYRT_NOT_FOUND);
  CHECK(tinyrt_store_query(s,&latest.id,&out)==TINYRT_VERIFY_FAILED);
- tinyrt_install_t*h=NULL;CHECK(tinyrt_store_begin(s,&old,&h)==TINYRT_CONFLICT&&h==NULL);
+ tinyrt_install_t*h=NULL;CHECK(tinyrt_store_begin(s,&old,&h)==TINYRT_OK&&h!=NULL);
+ tinyrt_store_abort(h);CHECK(tinyrt_store_query(s,&latest.id,&out)==TINYRT_VERIFY_FAILED);
  /* Same identity repair stages into the spare slot and re-verifies all bytes. */
  test_package_make(pkg,300,"app",2,17,&latest);
  CHECK(tinyrt_store_begin(s,&latest,&h)==TINYRT_OK);
@@ -394,9 +395,9 @@ static void test_capacity_version_and_order(void) {
  unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_NO_SPACE);
  c=a;c.package_size=TINYRT_STORE_MAX_PACKAGE_SIZE+1;
  CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_INVALID_ARGUMENT);
- c=a;c.id.version=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
- c=a;c.id.sha256[0]^=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
  CHECK(nor.mutations==mutations);
+ c=a;c.id.version=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_OK);tinyrt_store_abort(h);
+ c=a;c.id.sha256[0]^=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_OK);tinyrt_store_abort(h);
  test_package_make(pkg,300,"a",3,1,&c);CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_OK);
  CHECK(tinyrt_store_write(h,1,pkg,1)==TINYRT_INVALID_ARGUMENT);
  CHECK(tinyrt_store_write(h,0,pkg,100)==TINYRT_OK);

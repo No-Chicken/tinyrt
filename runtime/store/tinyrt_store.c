@@ -112,7 +112,7 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
         const tinyrt_app_info_t *old=&s->directory.records[index].app;
         if(tr_app_equal(old,a)) {
             if(!s->directory.records[index].quarantined) return TINYRT_ALREADY_INSTALLED;
-        } else if(a->id.version<=old->id.version) return TINYRT_CONFLICT;
+        } /* Same-version replacements and explicit downgrades still reverify. */
     } else if(s->directory.count>=TINYRT_STORE_MAX_APPS) return TINYRT_NO_SPACE;
     if(s->directory.generation==UINT64_MAX||s->revision==UINT64_MAX) return TINYRT_CONFLICT;
 

@@ -53,7 +53,7 @@ AOT section 由 256 字节元数据头与原始 AOT 模块组成，原始模块�
 
 ## 信任与选择
 
-主机信任记录仍由部署方提供，保留 key_id 和 app_id_prefix，追加 `aot_authority`：NONE=0（旧记录默认，Wasm-only）、RELEASE=1、DEVELOPMENT=2。包不能自行声明授权等级。包含 AOT 的包必须由 RELEASE 签署，或由 DEVELOPMENT 签署且主机显式允许开发 AOT、app_id 为 `demo.` 的非空后代；即使有 Wasm，也不接受无 AOT 权限的签名。
+主机信任记录仍由部署方提供，保留 key_id 和 app_id_prefix，追加 `aot_authority`：NONE=0（旧记录默认，Wasm-only）、RELEASE=1、DEVELOPMENT=2。包不能自行声明授权等级。包含 AOT 的包必须由 RELEASE 签署，或由 DEVELOPMENT 签署且主机显式允许开发 AOT；app_id 只受该可信钥的作用域约束；即使有 Wasm，也不接受无 AOT 权限的签名。
 
 验签、完整载荷哈希、section 布局、来源绑定和安全位不合格时拒绝整包。受信且结构合格的 AOT 如遇后端未启用、架构/CPU 不匹配、格式/compat_id 不匹配，则仅在带 Wasm 时回退。回退仍验证 Wasm；同目标 AOT 校验器拒绝时不能悄悄改用 Wasm。IO_ERROR、NO_MEMORY、BUSY、主机 INVALID_ARGUMENT 保持原状态；失败输出全零。
 
@@ -67,7 +67,7 @@ AOT section 由 256 字节元数据头与原始 AOT 模块组成，原始模块�
 
 SDK 通用 `package.py pack` 只封装 Wasm/resources，不接受外部 AOT 或调用方自报的安全位。`release_compile.py` 是本地发布流水线构件：只接受受发布操作方控制的来源锁、编译器 provenance、release profile、按序 runtime 补丁和签名钥；上传应用者不能选择这些配置。
 
-release profile schema1 的全部字段：`schema, provenance_sha256, compiler_patch_sha256, runtime_patch_sha256, runtime_abi_revision, signing_key_id, signing_key_sha256, development`。公钥摘要使用 SEC1 未压缩 65 字节。生产 development=false，并拒绝公开标量 1 测试私钥；development=true 仍限制 `demo.`。配置不内置任何生产密钥。
+release profile schema1 的全部字段：`schema, provenance_sha256, compiler_patch_sha256, runtime_patch_sha256, runtime_abi_revision, signing_key_id, signing_key_sha256, development`。公钥摘要使用 SEC1 未压缩 65 字节。生产 development=false，并拒绝公开标量 1 测试私钥；development=true 仍要求宿主显式开启开发 AOT，app ID 范围由信任记录决定。配置不内置任何生产密钥。
 
 两份 patch_set_hash 都为 SHA256(按配置顺序拼接每份补丁的原始 SHA256 字节)，即使只有一份补丁也执行聚合。编译器补丁顺序来自 source-lock 与 provenance；runtime 补丁由重复的 `--runtime-patch` 参数给出。所有补丁文件均重新读取验证。
 

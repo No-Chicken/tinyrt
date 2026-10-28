@@ -284,7 +284,7 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
     r = tinyrt_store_list(m->store, apps, TINYRT_STORE_MAX_APPS, &count);
     if (r != TINYRT_OK)
         return r;
-    uint32_t healthy_count = count, quarantined_count = 0;
+    uint32_t quarantined_count = 0;
     r = tinyrt_store_list_quarantined(m->store, apps + count, TINYRT_STORE_MAX_APPS - count, &quarantined_count);
     if (r != TINYRT_OK)
         return r;
@@ -292,10 +292,8 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
     bool update = false;
     for (uint32_t i = 0; i < count; i++)
         if (!strcmp(apps[i].id.app_id, a->id.app_id)) {
-            bool repair = i >= healthy_count && a->package_size == apps[i].package_size &&
-                          a->id.version == apps[i].id.version && !memcmp(a->id.sha256, apps[i].id.sha256, 32);
-            if (!repair && a->id.version <= apps[i].id.version)
-                return TINYRT_CONFLICT;
+            /* Any authenticated replacement keeps the app's KV namespace,
+             * including a quarantined identity after trust-key rotation. */
             update = true;
         }
     if (!update && count >= TINYRT_STORE_MAX_APPS)

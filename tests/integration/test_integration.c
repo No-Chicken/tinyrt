@@ -134,6 +134,30 @@ static void test_signed_aot(const char *dir) {
     keys[0].aot_authority=TINYRT_AOT_AUTHORITY_NONE;
 }
 #endif
+static void test_key_rotation_reinstall(const char *dir) {
+    tinyrt_package_trusted_key_t saved[2];memcpy(saved,keys,sizeof(saved));
+    fake_nor_init(&nor);memset(records,0,sizeof(records));tinyrt_manager_t *m=open_manager();
+    tinyrt_app_info_t old=install(m,dir,"counter-v2",TINYRT_OK),found;
+    kv_record_t *kv=record("demo.counter");kv->mask=1;kv->values[0]=73;
+    unsigned before=clears;
+    /* Remove the old public key, then boot under only PUBLIC test key 100. */
+    keys[0]=keys[1];keys[0].key_id=100;keys[0].app_id_prefix="";verifier.trusted_key_count=1;
+    m=reboot(m);tinyrt_app_info_t quarantined[TINYRT_STORE_MAX_APPS];uint32_t count=0;
+    CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK && count==1);
+    CHECK(tinyrt_manager_query(m,&old.id,&found)==TINYRT_VERIFY_FAILED);
+    /* Old-key signatures still fail; the quarantined identity survives. */
+    (void)install(m,dir,"counter-v1",TINYRT_VERIFY_FAILED);
+    CHECK(tinyrt_manager_query(m,&old.id,&found)==TINYRT_VERIFY_FAILED);
+    const char *names[]={"community-v2","community-v2-alt","community-v1"};
+    for(unsigned i=0;i<3;i++) {
+        tinyrt_app_info_t next=install(m,dir,names[i],TINYRT_OK);
+        CHECK(tinyrt_manager_query(m,&next.id,&found)==TINYRT_OK);
+        CHECK(tinyrt_manager_list_quarantined(m,quarantined,&count)==TINYRT_OK && count==0);
+        CHECK(clears==before && kv->mask==1 && kv->values[0]==73);
+        m=reboot(m);CHECK(tinyrt_manager_query(m,&next.id,&found)==TINYRT_OK);
+    }
+    tinyrt_manager_close(m);memcpy(keys,saved,sizeof(saved));verifier.trusted_key_count=2;
+}
 int main(int argc,char **argv) {
     if(argc!=2) return 2;
     CHECK(read_file(PUBLIC_KEY_FILE,keys[0].public_key,65)==65);
@@ -346,6 +370,7 @@ int main(int argc,char **argv) {
 #ifdef TINYRT_TEST_SIGNED_AOT
     test_signed_aot(argv[1]);
 #endif
+    test_key_rotation_reinstall(argv[1]);
     tinyrt_runtime_system_shutdown();
     CHECK(tinyrt_runtime_memory_used()==0);
     printf("INTEGRATION checks=%u PASS (real SHA256/P256/store/manager/WAMR; simulated NOR/KV)\n",checks);

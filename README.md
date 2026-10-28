@@ -117,9 +117,9 @@ millisecond clock and transactional storage. See [host protection semantics](spe
 
 Store recovery first selects the newest structurally valid committed directory,
 then quarantines invalid packages individually without writing media. Healthy
-apps remain available. Quarantine keeps the original identity, version floor,
+apps remain available. Quarantine keeps the original identity,
 capacity usage and extent reservation. Hosts can list quarantined identities,
-repair with the exact original package, replace with a higher version, or
+repair with the exact original package, replace with any positive version, or
 uninstall. IO/resource/configuration failures are returned rather than treated
 as corruption. A damaged package never causes directory rollback; damaged
 directory structure may still require selecting an older valid directory.

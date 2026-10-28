@@ -158,7 +158,7 @@ static tinyrt_status_t inspect_aot(const tinyrt_package_verifier_t *v,
     const tinyrt_package_aot_profile_t *p=v->aot_profile;
     if(key->aot_authority==TINYRT_AOT_AUTHORITY_NONE) return TINYRT_VERIFY_FAILED;
     if(key->aot_authority==TINYRT_AOT_AUTHORITY_DEVELOPMENT) {
-        if(!p || !p->allow_development || strncmp(m->app.id.app_id,"demo.",5) || !m->app.id.app_id[5])
+        if(!p || !p->allow_development)
             return TINYRT_VERIFY_FAILED;
     } else if(key->aot_authority!=TINYRT_AOT_AUTHORITY_RELEASE) return TINYRT_INVALID_ARGUMENT;
     uint8_t raw[256];

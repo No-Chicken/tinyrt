@@ -131,3 +131,15 @@ fragmentation, maximum packages, malformed intervals, quarantine revision
 changes, revision overflow and partial-write recovery. Signed integration runs
 a real WAMR guest from a large package containing assets. This does not establish
 device stack high-water, Flash latency, power-cut behavior or BLE throughput.
+
+## Explicit reinstall and trust-key migration
+
+`app_version` remains a positive uint32 label, not an anti-rollback counter.
+A different authenticated package for an existing app ID may have an equal or
+lower version. An exact healthy identity remains idempotent (`ALREADY_INSTALLED`).
+All replacements stage into a separate extent and pass the complete verifier
+before the directory commit. An invalid replacement leaves the previous healthy
+or quarantined package reserved. Quarantine never causes automatic fallback to an
+older directory, but an owner may explicitly replace it with a newly trusted
+signature without uninstalling. Manager KV state stays bound to app ID, so the
+replacement preserves saved data. Space for both extents is still required.

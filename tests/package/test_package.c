@@ -191,7 +191,10 @@ int main(int argc,char **argv) {
     profile.allow_development=true;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
     fixture(argv[1],"section_outside_demo.pkg");
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED && !wasm_calls && !aot_calls);
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK && wasm_calls==1 && aot_calls==1);
+    key.app_id_prefix="demo.";
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
+    key.app_id_prefix=NULL;
     key.aot_authority=TINYRT_AOT_AUTHORITY_RELEASE;profile.allow_development=false;
     fixture(argv[1],"section_aot_only.pkg");expected_aot_offset=528;config.validate_wasm=NULL;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);

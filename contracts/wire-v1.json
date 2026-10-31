@@ -141,7 +141,7 @@
       "request": "empty",
       "response": "u8 count, followed by count standard 72-byte app-info records",
       "query_status": 9,
-      "semantics": "Exact quarantined identities may be repaired by resending the same signed package or uninstalled. Final successful install still requires QUERY OK with the exact identity."
+      "semantics": "Exact quarantined identities may be repaired by resending the same package or uninstalled. Final successful install still requires QUERY OK with the exact identity."
     },
     "legacy_list": {
       "opcodes": [
@@ -419,7 +419,7 @@
           "type": "bytes[32]"
         }
       },
-      "semantics": "Schema 1 section metadata only; device authorizes the signature and execution backend."
+      "semantics": "Schema 1 section metadata only; device checks the package and selects the execution backend."
     },
     "runtime_info": {
       "hello_capability_bit": 64,
@@ -482,7 +482,7 @@
       "response": "schema:u16le=1, codec:u16le=1, total:u32le=133232, offset:u32le, chunk_length:u16le, reserved:u16le=0, sha256[32], data[chunk_length]",
       "response_header_size": 48,
       "max_chunk": 206,
-      "semantics": "Offsets relative to complete signed cover section. Exact identity required; missing cover returns NOT_FOUND."
+      "semantics": "Offsets relative to complete cover section. Exact identity required; missing cover returns NOT_FOUND."
     },
     "mobile_confirmation": {
       "hello_capability_bit": 128,

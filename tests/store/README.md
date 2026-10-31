@@ -1,6 +1,6 @@
 # Package store tests
 
-The synchronous simulated NOR supports partial-write failure injection. Tests exercise catalog recovery, update visibility, space/version bounds, ownership and corruption handling. The package verifier here is explicitly test-only. Full signature/Wasm checking belongs to package and integration suites. Product hardware evidence lives in EEBadge and is not a dependency of this repository.
+The synchronous simulated NOR supports partial-write failure injection. Tests exercise catalog recovery, update visibility, same-version and downgrade replacement, space bounds, ownership and corruption handling. The package verifier here is explicitly test-only. Full package/Wasm checking belongs to package and integration suites. Product hardware evidence lives in EEBadge and is not a dependency of this repository.
 
 Run the independent root build described in [README](../../README.md).
 The independent media producer writes TRDIR001 bytes directly. Coverage includes

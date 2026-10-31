@@ -1,19 +1,13 @@
 """Independent format-1 section serializer for C verifier tests; no SDK helpers imported."""
 import hashlib
 import struct
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import ec, utils
 
-ORDER = 0xFFFFFFFF00000000FFFFFFFFFFFFFFFFBCE6FAADA7179E84F3B9CAC2FC632551
 WASM = b"\0asm\1\0\0\0\0\5\4test"
 AOT = b"\0aot\5\0\0\0fixture-native-module"
-KEY = ec.derive_private_key(42, ec.SECP256R1())
 
-def resign(data, key=KEY):
+def rehash(data):
     data = bytearray(data)
     data[152:184] = hashlib.sha256(data[256:]).digest()
-    r, s = utils.decode_dss_signature(key.sign(b"TinyRT-package-v1\0"+data[:192], ec.ECDSA(hashes.SHA256())))
-    data[192:256] = r.to_bytes(32, "big") + min(s, ORDER-s).to_bytes(32, "big")
     return bytes(data)
 
 def envelope(header, sections):
@@ -27,7 +21,7 @@ def envelope(header, sections):
         table += struct.pack("<4I", kind, 0, cursor, len(content))
         payload += content; cursor += len(content)
     struct.pack_into("<HH5I", head, 8, 1, 256, cursor, 256, len(sections), 16, 0)
-    return resign(head + table + payload)
+    return rehash(head + table + payload)
 
 def fixtures(folder, header):
     meta = bytearray(256)
@@ -47,14 +41,12 @@ def fixtures(folder, header):
     cover=struct.pack('<8sHHIHHHHII',b'TRCOV001',1,1,32,210,210,150,150,88200,45000)+bytes(133200)
     names['section_cover']=envelope(header,[(1,WASM),(3,b'resources'),(4,cover)])
     (folder/'cover.sha256').write_bytes(hashlib.sha256(cover).digest())
-    previous = bytearray(good); struct.pack_into("<I", previous, 52, 8)
-    names["section_previous_key"] = resign(previous, ec.derive_private_key(43,ec.SECP256R1()))
     outside = bytearray(good); outside[56:88] = b"other.app".ljust(32,b"\0")
-    names["section_outside_demo"] = resign(outside)
+    names["section_other_namespace"] = rehash(outside)
     rejects = {}
     def changed(name, offset, value):
         data = bytearray(good); data[offset:offset+len(value)] = value
-        rejects[name] = resign(data)
+        rejects[name] = rehash(data)
     for name, offset, value in [
         ("table_offset",16,260),("table_count_zero",20,0),("table_count_many",20,5),
         ("entry_size",24,32),("header_flags",28,1),("unknown_section",256,5),
@@ -82,11 +74,11 @@ def fixtures(folder, header):
     cover_good=names['section_cover'];off=struct.unpack_from('<I',cover_good,296)[0]
     for name,pos,fmt,value in [('codec',10,'H',2),('width_bomb',16,'H',65535),('size',24,'I',0xffffffff),('version',8,'H',2)]:
         bad=bytearray(cover_good);struct.pack_into('<'+fmt,bad,off+pos,value)
-        rejects['cover_'+name]=resign(bad)
+        rejects['cover_'+name]=rehash(bad)
     for name,pos,value in [('overflow',300,0xffffffff),('duplicate',288,3),('unknown',288,5),('truncated_size',300,133231)]:
         bad=bytearray(cover_good);struct.pack_into('<I',bad,pos,value)
-        rejects['cover_'+name]=resign(bad)
-    bad=bytearray(cover_good);bad[-1]^=1;rejects['cover_unsigned_tamper']=bytes(bad)
+        rejects['cover_'+name]=rehash(bad)
+    bad=bytearray(cover_good);bad[-1]^=1;rejects['cover_tamper']=bytes(bad)
     for name, content in names.items(): (folder/(name+".pkg")).write_bytes(content)
     for name, content in rejects.items(): (folder/("section_reject_"+name+".pkg")).write_bytes(content)
     (folder/"section_reject.txt").write_text("\n".join("section_reject_"+name for name in rejects),encoding="ascii")

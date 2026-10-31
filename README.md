@@ -1,6 +1,6 @@
-# TinyRT core 0.0.4
+# TinyRT core 0.1.0
 
-TinyRT validates signed application packages, commits installations atomically,
+TinyRT validates application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the
 portable runtime, contracts and core tests. SDK authoring tools/examples and
 EEBadge board, BLE, UI and NVS adapters belong to their own repositories.
@@ -38,7 +38,7 @@ events. Its output is host validation, not package trust or device acceptance.
 `contracts/guest-v1.h` and JSON contracts are authoritative. The SDK generates
 copies from these contracts. `runtime/` owns package/store/manager/Wasm behavior;
 `protocol/` owns portable management framing; `specs/` documents wire formats.
-Core tests use independent signed encoders and frozen C/Wasm regression guests,
+Core tests use independent package encoders and frozen C/Wasm regression guests,
 so building this checkout does not require the SDK, EEBadge or ESP-IDF.
 Product-side tests moved to EEBadge `esp32/tests/tinyrt`.
 
@@ -72,7 +72,7 @@ callback responds to host termination; it does not let a guest request exit.
 The raw-Wasm runner accepts `stop`; `restart` and clean stdin EOF also stop
 normally, while `reboot` forces destruction and resets the clock. Runner KV is
 RAM-only and rolls back on a failed stop. JSON frames include the new style
-fields. Runtime and signed integration tests execute optional-stop fixtures
+fields. Runtime and integration tests execute optional-stop fixtures
 on the real pinned WAMR, including budget traps and storage failure injection.
 
 `draw_rgb565` adds one owned RGB565 little-endian image up to 256×240 per frame.
@@ -88,7 +88,7 @@ pixel byte count/CRC32 and clock interval. Explicit `capture` emits the retained
 frame and `pixels_hex` for desktop PNG review; `time` and `pointer` support input scripts.
 
 Current storage is an immutable package store plus sixteen i32 values per app.
-`asset_read(offset, ptr, len)` reads authenticated current-package resources in
+`asset_read(offset, ptr, len)` reads current-package resources in
 init/event, at most 4096 bytes per call. There is no private file filesystem yet. The store supports 16 apps in a default
 0x4E0000-byte region (hosts override `TINYRT_STORE_SIZE`); one package may use the whole data area, with two 4 KiB directory sectors and variable contiguous extents.
 Updates require separate free staging space; fragmentation or insufficient
@@ -100,10 +100,9 @@ acceptance remain product tests; host success does not establish hardware safety
 
 ## Host protection policies
 
-Trusted keys now optionally restrict `app_id_prefix`: NULL/empty keeps legacy
-unrestricted trust, a trailing dot matches nonempty descendants (`demo.`), and
-any other value matches one exact app ID. This restriction is host policy; package format 1 records the signing key ID. Independent publishers must receive disjoint scopes. Intentional
-overlap permits key rotation and must be authorized by the product trust policy.
+Devices do not check who signed a package: key ID and signature bytes are
+ignored, and any package for an installed app ID replaces it and keeps its data.
+Pairing guards sideloading; the store guards publishing and app ID ownership.
 
 The manager coalesces changed KV into at most one ordinary save attempt per
 5 seconds, using one timer across guest restarts and app switches. Setters still
@@ -127,7 +126,7 @@ directory structure may still require selecting an older valid directory.
 ## Package and desktop workflow
 
 The only package format is 1: `TRPKG001`, a 256-byte header and canonical
-16-byte section records for Wasm, optional trusted AOT, and resources. Store
+16-byte section records for Wasm, optional AOT, and resources. Store
 format and BLE metadata schema are also 1. The core version comes from
 [VERSION](VERSION); product firmware and SDK versions are managed independently
 in their own repositories.
@@ -150,8 +149,7 @@ installation trust remains in the package/store path.
 
 This extraction preserves the original source and notices without assigning a
 new project license. WAMR is obtained separately at a fixed revision and retains
-its upstream license. Test signing scalars 1, 2, 42 and 43 are public test fixtures;
-they must never be trusted by production devices. No production keys are stored.
+its upstream license. No keys are stored.
 
 ## Optional raster graphics (0.0.3)
 

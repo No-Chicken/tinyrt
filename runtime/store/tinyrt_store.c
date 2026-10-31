@@ -109,10 +109,9 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *s,const tinyrt_app_info_t *a,
     if(r!=TINYRT_OK) return r;
     int index=find_app(s,a->id.app_id);
     if(index>=0) {
-        const tinyrt_app_info_t *old=&s->directory.records[index].app;
-        if(tr_app_equal(old,a)) {
-            if(!s->directory.records[index].quarantined) return TINYRT_ALREADY_INSTALLED;
-        } else if(a->id.version<=old->id.version) return TINYRT_CONFLICT;
+        /* Any other package for the same ID replaces it; versions need not increase. */
+        if(tr_app_equal(&s->directory.records[index].app,a) &&
+           !s->directory.records[index].quarantined) return TINYRT_ALREADY_INSTALLED;
     } else if(s->directory.count>=TINYRT_STORE_MAX_APPS) return TINYRT_NO_SPACE;
     if(s->directory.generation==UINT64_MAX||s->revision==UINT64_MAX) return TINYRT_CONFLICT;
 

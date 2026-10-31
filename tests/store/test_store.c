@@ -105,7 +105,9 @@ static void test_quarantine_does_not_rollback_version(void) {
  CHECK(open_store(&s)==TINYRT_OK);
  CHECK(tinyrt_store_query(s,&old.id,&out)==TINYRT_NOT_FOUND);
  CHECK(tinyrt_store_query(s,&latest.id,&out)==TINYRT_VERIFY_FAILED);
- tinyrt_install_t*h=NULL;CHECK(tinyrt_store_begin(s,&old,&h)==TINYRT_CONFLICT&&h==NULL);
+ /* Recovery never rolls back, but an explicit older install may replace it. */
+ tinyrt_install_t*h=NULL;CHECK(tinyrt_store_begin(s,&old,&h)==TINYRT_OK&&h!=NULL);
+ tinyrt_store_abort(h);h=NULL;
  /* Same identity repair stages into the spare slot and re-verifies all bytes. */
  test_package_make(pkg,300,"app",2,17,&latest);
  CHECK(tinyrt_store_begin(s,&latest,&h)==TINYRT_OK);
@@ -394,8 +396,6 @@ static void test_capacity_version_and_order(void) {
  unsigned mutations=nor.mutations;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_NO_SPACE);
  c=a;c.package_size=TINYRT_STORE_MAX_PACKAGE_SIZE+1;
  CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_INVALID_ARGUMENT);
- c=a;c.id.version=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
- c=a;c.id.sha256[0]^=1;CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_CONFLICT);
  CHECK(nor.mutations==mutations);
  test_package_make(pkg,300,"a",3,1,&c);CHECK(tinyrt_store_begin(s,&c,&h)==TINYRT_OK);
  CHECK(tinyrt_store_write(h,1,pkg,1)==TINYRT_INVALID_ARGUMENT);
@@ -404,6 +404,24 @@ static void test_capacity_version_and_order(void) {
  CHECK(tinyrt_store_write(h,UINT32_MAX,pkg,100)==TINYRT_INVALID_ARGUMENT);
  CHECK(tinyrt_store_commit(h)==TINYRT_INVALID_ARGUMENT);
  tinyrt_store_abort(h);tinyrt_app_info_t out;CHECK(tinyrt_store_query(s,&a.id,&out)==TINYRT_OK);
+ tinyrt_store_close(s);
+}
+static void test_same_version_and_downgrade_replace(void) {
+ fake_nor_init(&nor);tinyrt_store_t *s=NULL;CHECK(open_store(&s)==TINYRT_OK);
+ tinyrt_app_info_t v2=install_package(s,"app",2,300),rebuilt,out;tinyrt_install_t *h=NULL;
+ test_package_make(pkg,300,"app",2,32,&rebuilt);
+ CHECK(memcmp(rebuilt.id.sha256,v2.id.sha256,32));
+ CHECK(tinyrt_store_begin(s,&rebuilt,&h)==TINYRT_OK);
+ CHECK(tinyrt_store_write(h,0,pkg,300)==TINYRT_OK);
+ CHECK(tinyrt_store_commit(h)==TINYRT_OK);tinyrt_store_abort(h);
+ CHECK(tinyrt_store_query(s,&rebuilt.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_query(s,&v2.id,&out)==TINYRT_NOT_FOUND);
+ tinyrt_app_info_t v1=install_package(s,"app",1,300);
+ tinyrt_store_close(s);CHECK(open_store(&s)==TINYRT_OK);
+ CHECK(tinyrt_store_query(s,&v1.id,&out)==TINYRT_OK);
+ CHECK(tinyrt_store_query(s,&rebuilt.id,&out)==TINYRT_NOT_FOUND);
+ tinyrt_app_info_t listed[TINYRT_STORE_MAX_APPS];uint32_t count=0;
+ CHECK(tinyrt_store_list(s,listed,TINYRT_STORE_MAX_APPS,&count)==TINYRT_OK&&count==1);
  tinyrt_store_close(s);
 }
 static void test_verify_failure_and_uninstall(void) {
@@ -625,7 +643,8 @@ int main(void) {
     RUN(test_directory_roundtrip); RUN(test_reject_torn_commit); RUN(test_invalid_referenced_package);
     RUN(test_equal_generation_conflict); RUN(test_initialization_recovery); RUN(test_read_error_not_fallback);
     RUN(test_install_update_reopen); RUN(test_idempotent_commit_and_busy);
-    RUN(test_capacity_version_and_order); RUN(test_verify_failure_and_uninstall); RUN(test_maximum_package_and_generation);
+    RUN(test_capacity_version_and_order); RUN(test_same_version_and_downgrade_replace);
+    RUN(test_verify_failure_and_uninstall); RUN(test_maximum_package_and_generation);
     RUN(test_power_cut_matrix); RUN(test_reported_error_after_commit); RUN(test_recovery_read_failure_blocks_mutation);
     RUN(test_reference_io_error_not_fallback); RUN(test_stale_directory_is_not_snapshot); RUN(test_initial_recovery_is_narrow);
     RUN(test_directory_and_api_rejections); RUN(test_failed_write_is_terminal);

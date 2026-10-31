@@ -74,7 +74,7 @@ system thread/lock overhead; the limit stays 2 MiB.
 Real WAMR tests check known RGB565 bytes, guest mutation after copy, the entire
 maximum pixel payload, address/length/dimension overflow, viewport edges,
 permission and signature rejection, stage misuse, repeated images, command
-limits, skip mixing, clock boundaries/defaults and allocator cleanup. Signed
+limits, skip mixing, clock boundaries/defaults and allocator cleanup. Packaged
 manager integration checks pixels, no-copy skip sentinels and clock changes.
 Host runner JSON reports pixel_bytes, pixel_crc32 and clock_interval_ms and explicit desktop `capture` serializes retained commands and `pixels_hex`. These tests do not substitute for device frame rate,
 display byte order, task-stack high-water or BLE installation measurements.
@@ -90,12 +90,12 @@ floor nearest-neighbor sampling: source_x=floor(dst_x*src_w/dst_w), similarly
 y. Source bytes are copied once; no guest pointer reaches the display adapter.
 Command kind 8 records source dimensions separately from destination x/y/w/h.
 
-`asset_read(offset,ptr,len)` reads only the running package's authenticated
+`asset_read(offset,ptr,len)` reads only the running package's
 resources section during init/event, with at most 4096 bytes per call. It checks
 both resource range and guest address before copying and returns len or -1.
 Resource bytes are not writable and this API is not a private file filesystem.
 The desktop runner reads the manifest resource file supplied by the SDK;
-signed installation verifies the package before exposing its resources.
+installation verifies the package before exposing its resources.
 
 ## Input and backend selection
 

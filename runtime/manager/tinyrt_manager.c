@@ -284,20 +284,17 @@ tinyrt_status_t tinyrt_manager_begin(tinyrt_manager_t *m, const tinyrt_app_info_
     r = tinyrt_store_list(m->store, apps, TINYRT_STORE_MAX_APPS, &count);
     if (r != TINYRT_OK)
         return r;
-    uint32_t healthy_count = count, quarantined_count = 0;
+    uint32_t quarantined_count = 0;
     r = tinyrt_store_list_quarantined(m->store, apps + count, TINYRT_STORE_MAX_APPS - count, &quarantined_count);
     if (r != TINYRT_OK)
         return r;
     count += quarantined_count;
+    /* Any different package for an installed app ID replaces it, including
+     * same-version rebuilds and downgrades; app data is kept across updates. */
     bool update = false;
     for (uint32_t i = 0; i < count; i++)
-        if (!strcmp(apps[i].id.app_id, a->id.app_id)) {
-            bool repair = i >= healthy_count && a->package_size == apps[i].package_size &&
-                          a->id.version == apps[i].id.version && !memcmp(a->id.sha256, apps[i].id.sha256, 32);
-            if (!repair && a->id.version <= apps[i].id.version)
-                return TINYRT_CONFLICT;
+        if (!strcmp(apps[i].id.app_id, a->id.app_id))
             update = true;
-        }
     if (!update && count >= TINYRT_STORE_MAX_APPS)
         return TINYRT_NO_SPACE;
     r = tinyrt_manager_stop(m);

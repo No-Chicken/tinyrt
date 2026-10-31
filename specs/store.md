@@ -2,7 +2,7 @@
 
 The store spans `TINYRT_STORE_SIZE` bytes, `0x4E0000` (4992 KiB) unless the
 host overrides it. Offsets 0 and 4096 contain two directory sectors. The rest
-stores immutable signed packages.
+stores immutable packages.
 
 There is no separate per-package limit: `TINYRT_STORE_MAX_PACKAGE_SIZE` is the
 whole data area, `TINYRT_STORE_SIZE - 2 * 4096`. Updates require a separate free
@@ -128,6 +128,6 @@ and 256-byte header remain on the stack.
 
 Host tests cover independent format-1 media fixtures, 16-app catalogs, first fit,
 fragmentation, maximum packages, malformed intervals, quarantine revision
-changes, revision overflow and partial-write recovery. Signed integration runs
+changes, revision overflow and partial-write recovery. Integration runs
 a real WAMR guest from a large package containing assets. This does not establish
 device stack high-water, Flash latency, power-cut behavior or BLE throughput.

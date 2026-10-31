@@ -43,9 +43,7 @@ static void fixture(const char *dir,const char *name) {
 }
 int main(int argc,char **argv) {
     if(argc!=2) return 2;
-    tinyrt_package_trusted_key_t key={.key_id=7};
-    CHECK(load(argv[1],"public.bin",key.public_key,65)==65);
-    tinyrt_package_verifier_t config={&key,1,wasm_stub,NULL};
+    tinyrt_package_verifier_t config={wasm_stub,NULL};
     tinyrt_store_io_t io={.read=read_data};
     tinyrt_package_metadata_t metadata;
     fixture(argv[1],"valid.pkg");expected_wasm_offset=288;
@@ -78,36 +76,10 @@ int main(int argc,char **argv) {
     CHECK(load(argv[1],"cover.sha256",expected,32)==32);
     CHECK(!memcmp(metadata.cover.sha256,expected,32) && !bad_reads);
     fixture(argv[1],"valid.pkg");expected_wasm_offset=288;
-    key.public_key[64]^=1;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
-    key.public_key[64]^=1;
-    tinyrt_package_trusted_key_t duplicate[2]={key,key};
-    config.trusted_keys=duplicate; config.trusted_key_count=2;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
-    config.trusted_keys=&key; config.trusted_key_count=1;
-    const struct { const char *scope; tinyrt_status_t expected; } scopes[]={
-        {NULL,TINYRT_OK},{"",TINYRT_OK},{"demo.",TINYRT_OK},
-        {"demo.app",TINYRT_OK},{"demo",TINYRT_VERIFY_FAILED},
-        {"dem",TINYRT_VERIFY_FAILED},{"demo.app.",TINYRT_VERIFY_FAILED},
-        {"other.",TINYRT_VERIFY_FAILED},{"Demo.",TINYRT_INVALID_ARGUMENT},
-        {"demo/",TINYRT_INVALID_ARGUMENT},
-        {"abcdefghijklmnopqrstuvwxyz123456",TINYRT_INVALID_ARGUMENT}};
-    for(size_t i=0;i<sizeof(scopes)/sizeof(scopes[0]);++i) {
-        fixture(argv[1],"valid.pkg");expected_wasm_offset=288;key.app_id_prefix=scopes[i].scope;
-        CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==scopes[i].expected);
-        if(scopes[i].expected!=TINYRT_OK) CHECK(wasm_calls==0 && metadata.app.id.version==0);
-    }
-    tinyrt_package_trusted_key_t publishers[2]={key,{.key_id=8}};
-    publishers[0].app_id_prefix="demo.";publishers[1].app_id_prefix="other.";
-    CHECK(load(argv[1],"publisher2.bin",publishers[1].public_key,65)==65);
-    config.trusted_keys=publishers;config.trusted_key_count=2;
-    const char *namespaces[]={"publisher2_valid","publisher2_cross","namespace_boundary","namespace_empty"};
-    for(unsigned i=0;i<4;++i) {
-        char file[64];snprintf(file,sizeof(file),"%s.pkg",namespaces[i]);fixture(argv[1],file);
-        CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==(i?TINYRT_VERIFY_FAILED:TINYRT_OK));
-        if(i) CHECK(wasm_calls==0);
-    }
-    config.trusted_keys=&key;config.trusted_key_count=1;key.app_id_prefix=NULL;
+    /* Key ID, signature bytes and namespace carry no meaning on the device. */
+    fixture(argv[1],"any_signature.pkg");expected_wasm_offset=288;
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
+    CHECK(!strcmp(metadata.app.id.app_id,"my-game") && metadata.signing_key_id==0xdeadbeefu && wasm_calls==1);
     char reject[4096]; size_t names=load(argv[1],"reject.txt",reject,sizeof(reject)-1); reject[names]=0;
     char *name=strtok(reject,"\r\n");
     while(name) {
@@ -147,9 +119,7 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     CHECK(read_calls==0); /* Legacy invalid host config fails before touching IO. */
     fail_read=0;
-    config.validate_wasm=wasm_stub; config.trusted_key_count=0;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
-    config.trusted_key_count=1;
+    config.validate_wasm=wasm_stub;
     uint32_t reads_before=read_calls;
     CHECK(tinyrt_package_inspect(&config,&io,UINT32_MAX-20,data_size,&metadata)==TINYRT_INVALID_ARGUMENT);
     CHECK(read_calls==reads_before);
@@ -170,7 +140,6 @@ int main(int argc,char **argv) {
     tinyrt_package_aot_profile_t profile={.enabled=true,.format_version=5,.target_arch="xtensa",.target_cpu="esp32s3"};
     memset(profile.compat_id,4,sizeof(profile.compat_id));
     config.aot_profile=&profile;config.validate_aot=aot_stub;
-    key.aot_authority=TINYRT_AOT_AUTHORITY_RELEASE;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
     CHECK(metadata.execution_kind==TINYRT_PACKAGE_EXEC_AOT && metadata.aot_offset==576 && aot_calls==1 && wasm_calls==1);
     CHECK(metadata.aot.compiler_sha256[0]==6 && !bad_reads);
@@ -184,27 +153,15 @@ int main(int argc,char **argv) {
         profile.enabled=true;memset(profile.target_cpu,0,sizeof(profile.target_cpu));
         strcpy(profile.target_cpu,"esp32s3");memset(profile.compat_id,4,sizeof(profile.compat_id));
     }
-    fixture(argv[1],"section_aot.pkg");key.aot_authority=TINYRT_AOT_AUTHORITY_NONE;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED && !wasm_calls && !aot_calls);
-    key.aot_authority=TINYRT_AOT_AUTHORITY_DEVELOPMENT;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
-    profile.allow_development=true;
+    fixture(argv[1],"section_other_namespace.pkg");
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
-    fixture(argv[1],"section_outside_demo.pkg");
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED && !wasm_calls && !aot_calls);
-    key.aot_authority=TINYRT_AOT_AUTHORITY_RELEASE;profile.allow_development=false;
+    CHECK(!strcmp(metadata.app.id.app_id,"other.app") && metadata.execution_kind==TINYRT_PACKAGE_EXEC_AOT);
     fixture(argv[1],"section_aot_only.pkg");expected_aot_offset=528;config.validate_wasm=NULL;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
     CHECK(metadata.wasm_size==0 && metadata.execution_kind==TINYRT_PACKAGE_EXEC_AOT && aot_calls==1 && !wasm_calls);
     profile.enabled=false;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
     profile.enabled=true;config.validate_wasm=wasm_stub;expected_aot_offset=576;
-    publishers[0]=key;publishers[1].aot_authority=TINYRT_AOT_AUTHORITY_RELEASE;publishers[1].app_id_prefix=NULL;
-    config.trusted_keys=publishers;config.trusted_key_count=2;
-    fixture(argv[1],"section_previous_key.pkg");
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK && metadata.signing_key_id==8);
-    config.trusted_keys=&key;config.trusted_key_count=1;
-    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
     names=load(argv[1],"section_reject.txt",reject,sizeof(reject)-1);reject[names]=0;name=strtok(reject,"\r\n");
     while(name) {
         char file[100];snprintf(file,sizeof(file),"%s.pkg",name);fixture(argv[1],file);
@@ -228,6 +185,6 @@ int main(int argc,char **argv) {
         CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==aot_errors[i]);
         CHECK(!memcmp(&metadata,&empty_metadata,sizeof(metadata)));
     }
-    printf("PACKAGE checks=%u failures=%u (real SHA256/P256; explicit Wasm stub)\n",checks,failures);
+    printf("PACKAGE checks=%u failures=%u (real SHA256; explicit Wasm stub)\n",checks,failures);
     return failures?1:0;
 }

@@ -1,10 +1,8 @@
-"""Produce real signed application fixtures, with explicit PUBLIC TEST key."""
+"""Produce real application fixtures."""
 import hashlib
 from pathlib import Path
 import struct
 import sys
-from cryptography.hazmat.primitives import serialization
-from cryptography.hazmat.primitives.asymmetric import ec
 ROOT=Path(__file__).resolve().parents[2]
 sys.path.insert(0,str(ROOT/"tests/fixtures"))
 from reference_package import encode
@@ -64,18 +62,16 @@ def main(folder):
         output.write_bytes(encode(wasm.read_bytes(),app_id=app_id,title=name,version=version,
                                  assets=bytes.fromhex("00f8e0071f00ffff") if name=="asset_valid" else b""))
         identity(output)
-    bad=bytearray((folder/"counter-v2.trpkg").read_bytes()); bad[200]^=1
-    output=folder/"invalid-signature.trpkg"; output.write_bytes(bad); identity(output)
-    output=folder/"counter-cross-publisher.trpkg"
+    bad=bytearray((folder/"counter-v2.trpkg").read_bytes()); bad[300]^=1
+    output=folder/"invalid-payload.trpkg"; output.write_bytes(bad); identity(output)
+    output=folder/"counter-other-author.trpkg"
     output.write_bytes(encode((ROOT/"tests/fixtures/guests/counter-v2.wasm").read_bytes(),
-                             app_id="demo.counter",title="Foreign publisher",version=3,key_id=2,test_scalar=2))
+                             app_id="demo.counter",title="Other author",version=3,key_id=2))
     identity(output)
     wasm=(ROOT/"tests/fixtures/guests/counter-v1.wasm").read_bytes()
     output=folder/"counter-maximum.trpkg"
     output.write_bytes(encode(wasm,app_id="demo.maximum",title="Maximum package",version=1,
                              assets=b"\xa5"*(0x200000-((288+len(wasm)+3)&~3))))
     identity(output)
-    (folder/"publisher2.bin").write_bytes(ec.derive_private_key(2,ec.SECP256R1()).public_key().public_bytes(
-        serialization.Encoding.X962,serialization.PublicFormat.UncompressedPoint))
-    print(f"INTEGRATION fixtures={len(jobs)+3} real P256 packages; public test key_ids=1,2")
+    print(f"INTEGRATION fixtures={len(jobs)+3} packages")
 if __name__=="__main__": main(Path(sys.argv[1]))

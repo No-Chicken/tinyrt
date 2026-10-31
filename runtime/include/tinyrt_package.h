@@ -40,7 +40,7 @@ typedef struct {
 #define TINYRT_COVER_SECTION_SIZE 133232u
 typedef struct {
     uint32_t offset, size, codec;
-    uint8_t sha256[32]; /* Complete signed section, including its 32-byte header. */
+    uint8_t sha256[32]; /* Complete section, including its 32-byte header. */
 } tinyrt_package_cover_t;
 typedef struct {
     tinyrt_app_info_t app;
@@ -53,38 +53,25 @@ typedef struct {
     tinyrt_package_execution_t execution_kind;
     tinyrt_package_fallback_t fallback_reason;
 } tinyrt_package_metadata_t;
-typedef enum {
-    TINYRT_AOT_AUTHORITY_NONE=0, TINYRT_AOT_AUTHORITY_RELEASE=1,
-    TINYRT_AOT_AUTHORITY_DEVELOPMENT=2
-} tinyrt_package_aot_authority_t;
-typedef struct {
-    uint32_t key_id;
-    uint8_t public_key[65]; /* SEC1 uncompressed P-256: 04 || X32 || Y32. */
-    const char *app_id_prefix; /* NULL/empty: all IDs; trailing '.': descendants;
-                               * otherwise one exact ID. Host-owned lifetime. */
-    tinyrt_package_aot_authority_t aot_authority; /* Zero keeps legacy keys Wasm-only. */
-} tinyrt_package_trusted_key_t;
 /* Required: validate ABI exports, structure, imports and memory without running
- * guest code. Offset is absolute in io; policy is authenticated.
+ * guest code. Offset is absolute in io.
  * Preserve IO_ERROR, NO_MEMORY, BUSY and host configuration/lifecycle
  * INVALID_ARGUMENT. Invalid guest bytes must return VERIFY_FAILED. */
 typedef tinyrt_status_t (*tinyrt_package_wasm_validate_fn)(
     void *, const tinyrt_store_io_t *, uint32_t, uint32_t,
     const tinyrt_package_policy_t *);
 typedef struct {
-    bool enabled, allow_development;
+    bool enabled;
     uint32_t format_version;
     char target_arch[16], target_cpu[16];
     uint8_t compat_id[32];
 } tinyrt_package_aot_profile_t;
-/* Authenticated metadata states release-pipeline claims, not machine-code proof.
- * Only called for an authorized, compatible module; never execute guest code. */
+/* Metadata states build claims, not machine-code proof; provenance is checked
+ * off-device. Only called for a compatible module; never execute guest code. */
 typedef tinyrt_status_t (*tinyrt_package_aot_validate_fn)(
     void *, const tinyrt_store_io_t *, uint32_t, uint32_t,
     const tinyrt_package_policy_t *, const tinyrt_package_aot_metadata_t *);
 typedef struct {
-    const tinyrt_package_trusted_key_t *trusted_keys;
-    size_t trusted_key_count;
     tinyrt_package_wasm_validate_fn validate_wasm;
     void *wasm_ctx;
     const tinyrt_package_aot_profile_t *aot_profile; /* Host-owned; NULL disables AOT. */
@@ -93,7 +80,7 @@ typedef struct {
 } tinyrt_package_verifier_t;
 /* io must remain immutable for this synchronous call. Reads <=1024 bytes.
  * Metadata offsets are package-relative. Output is zero on failure.
- * No embedded trusted keys or development fallback. */
+ * Header bytes 192..255 and key_id are ignored; no signature is checked. */
 tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *,
     const tinyrt_store_io_t *, uint32_t, uint32_t, tinyrt_package_metadata_t *);
 /* Context is a tinyrt_package_verifier_t; directly usable by tinyrt_store_open. */

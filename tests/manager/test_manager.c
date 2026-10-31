@@ -41,7 +41,7 @@ static tinyrt_status_t clear(void*c,const char*id) {(void)c;(void)id;if(fail_cle
 static uint32_t now(void*c){(void)c;return clock_ms;}
 static tinyrt_manager_t *open_manager(void) {
  tinyrt_store_io_t io=fake_nor_io(&nor);underlying_io=io;io.read=counted_read;static tinyrt_package_verifier_t verifier={0};
- static tinyrt_package_aot_profile_t profile={true,false,5,"x86_64","",{1}};verifier.aot_profile=&profile;
+ static tinyrt_package_aot_profile_t profile={true,5,"x86_64","",{1}};verifier.aot_profile=&profile;
  tinyrt_manager_storage_t storage={NULL,load,save,clear,now};tinyrt_manager_t*m=NULL;
  CHECK(tinyrt_manager_open(&io,&verifier,&storage,&m)==TINYRT_OK&&m);return m;
 }

@@ -86,9 +86,9 @@ tinyrt_status_t tinyrt_runtime_validate_wasm(void *, const tinyrt_store_io_t *,
  * bounded memory and imports; rejects implicit initialization entry points. */
 tinyrt_status_t tinyrt_runtime_create(const void *, uint32_t,
     const tinyrt_package_policy_t *, const tinyrt_runtime_host_t *, tinyrt_runtime_t **);
-/* AOT is an explicit build-time opt-in. The host profile and signed metadata
- * must come from the trusted package verifier, never from an unauthenticated
- * caller. Machine code safety depends on that trusted compilation pipeline.
+/* AOT is an explicit build-time opt-in. The host profile and metadata must come
+ * from the package verifier, never from an unchecked caller. Machine code safety
+ * depends on compilation by the pinned toolchain, which the store checks.
  * Config requires a deadline guard; AOT uses it instead of instruction counts.
  * The validator context is a tinyrt_runtime_aot_config_t; validation does not
  * execute guest code. Creation copies guard configuration and module bytes. */

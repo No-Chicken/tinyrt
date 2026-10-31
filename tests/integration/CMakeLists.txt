@@ -10,21 +10,19 @@ add_executable(test_integration test_integration.c ../store/fake_nor.c
     ../../runtime/manager/tinyrt_manager.c)
 target_include_directories(test_integration PRIVATE ../../runtime/include ../store
     "${WAMR_ROOT_DIR}/core/iwasm/include")
-target_compile_definitions(test_integration PRIVATE
-    PUBLIC_KEY_FILE="${CMAKE_CURRENT_LIST_DIR}/../package/development-public.sec1")
 target_link_libraries(test_integration PRIVATE tinyrt_runtime bcrypt ws2_32)
 if(MSVC)
     target_compile_options(test_integration PRIVATE /W4 /WX /utf-8 /wd4996)
 endif()
 enable_testing()
-add_test(NAME signed_fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/make_packages.py" "${CMAKE_CURRENT_BINARY_DIR}/packages")
-set_tests_properties(signed_fixtures PROPERTIES FIXTURES_SETUP signed_packages)
+add_test(NAME fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/make_packages.py" "${CMAKE_CURRENT_BINARY_DIR}/packages")
+set_tests_properties(fixtures PROPERTIES FIXTURES_SETUP packages)
 add_test(NAME integration COMMAND test_integration "${CMAKE_CURRENT_BINARY_DIR}/packages")
-set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED signed_packages TIMEOUT 60)
+set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED packages TIMEOUT 60)
 if(TINYRT_ENABLE_AOT AND TINYRT_AOT_TEST_COMPILER)
- target_compile_definitions(test_integration PRIVATE TINYRT_TEST_SIGNED_AOT=1)
- add_test(NAME signed_aot_fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/make_aot_packages.py"
+ target_compile_definitions(test_integration PRIVATE TINYRT_TEST_AOT=1)
+ add_test(NAME aot_fixtures COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/make_aot_packages.py"
   "${CMAKE_CURRENT_BINARY_DIR}/packages" "${TINYRT_AOT_TEST_COMPILER}")
- set_tests_properties(signed_aot_fixtures PROPERTIES FIXTURES_SETUP signed_aot_packages)
- set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED "signed_packages;signed_aot_packages")
+ set_tests_properties(aot_fixtures PROPERTIES FIXTURES_SETUP aot_packages)
+ set_tests_properties(integration PROPERTIES FIXTURES_REQUIRED "packages;aot_packages")
 endif()

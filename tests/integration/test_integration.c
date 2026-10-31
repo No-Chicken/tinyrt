@@ -7,8 +7,7 @@
 static unsigned checks;
 #define CHECK(x) do {++checks; if(!(x)) {fprintf(stderr,"FAIL %s:%d %s\n",__FILE__,__LINE__,#x); exit(1);}} while(0)
 static fake_nor_t nor;
-static tinyrt_package_trusted_key_t keys[2]={{.key_id=1,.app_id_prefix="demo."},{.key_id=2,.app_id_prefix="other."}};
-static tinyrt_package_verifier_t verifier={keys,2,tinyrt_runtime_validate_wasm,NULL};
+static tinyrt_package_verifier_t verifier={tinyrt_runtime_validate_wasm,NULL};
 static tinyrt_frame_t frame,previous;
 static unsigned saves,clears;
 static unsigned guard_arms,guard_disarms;
@@ -101,12 +100,11 @@ static void corrupt_package(const char *dir,const char *name,uint32_t byte) {
     }
     CHECK(false);
 }
-#ifdef TINYRT_TEST_SIGNED_AOT
-static void test_signed_aot(const char *dir) {
-    tinyrt_package_aot_profile_t profile={true,false,5,"x86_64","generic",{1}};
+#ifdef TINYRT_TEST_AOT
+static void test_aot(const char *dir) {
+    tinyrt_package_aot_profile_t profile={true,5,"x86_64","generic",{1}};
     tinyrt_runtime_aot_config_t config={&profile,&execution_guard};
     verifier.aot_profile=&profile;verifier.validate_aot=tinyrt_runtime_validate_aot;verifier.aot_ctx=&config;
-    keys[0].aot_authority=TINYRT_AOT_AUTHORITY_RELEASE;
     fake_nor_init(&nor);memset(records,0,sizeof(records));tinyrt_manager_t *m=open_manager();
     size_t base=tinyrt_runtime_memory_used();
     tinyrt_app_info_t app=install(m,dir,"counter-aot",TINYRT_OK);
@@ -125,20 +123,16 @@ static void test_signed_aot(const char *dir) {
     CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_VERIFY_FAILED && frame.count==0);
     CHECK(record("demo.counter")->values[0]==0 && tinyrt_runtime_memory_used()==base);
     tinyrt_manager_close(m);
-    /* The same signed package explicitly falls back to Wasm when disabled. */
+    /* The same package explicitly falls back to Wasm when disabled. */
     profile.enabled=false;m=open_manager();
     CHECK(tinyrt_manager_list(m,catalog,&count)==TINYRT_OK && count==1 && catalog[0].execution_kind==TINYRT_PACKAGE_EXEC_WASM
           && catalog[0].fallback_reason==TINYRT_PACKAGE_FALLBACK_DISABLED);
     CHECK(tinyrt_manager_start(m,&app.id,466,466,&frame)==TINYRT_OK);
     tinyrt_manager_close(m);verifier.aot_profile=NULL;verifier.validate_aot=NULL;verifier.aot_ctx=NULL;
-    keys[0].aot_authority=TINYRT_AOT_AUTHORITY_NONE;
 }
 #endif
 int main(int argc,char **argv) {
     if(argc!=2) return 2;
-    CHECK(read_file(PUBLIC_KEY_FILE,keys[0].public_key,65)==65);
-    char public2[1024];snprintf(public2,sizeof(public2),"%s/publisher2.bin",argv[1]);
-    CHECK(read_file(public2,keys[1].public_key,65)==65);
     CHECK(tinyrt_runtime_system_init()==TINYRT_OK);
     fake_nor_init(&nor);
     kv_record_t *kv=record("demo.counter"); kv->mask=1; kv->values[0]=999;
@@ -160,7 +154,7 @@ int main(int argc,char **argv) {
     CHECK(list_status==TINYRT_OK && count==1 && listed[0].app.id.version==1);
     tinyrt_app_info_t found;
     CHECK(tinyrt_manager_query(m,&v1.id,&found)==TINYRT_OK);
-    tinyrt_app_info_t bad=install(m,argv[1],"invalid-signature",TINYRT_VERIFY_FAILED);
+    tinyrt_app_info_t bad=install(m,argv[1],"invalid-payload",TINYRT_VERIFY_FAILED);
     CHECK(kv->values[0]==1 && saves==1);
     CHECK(tinyrt_manager_query(m,&v1.id,&found)==TINYRT_OK);
     CHECK(tinyrt_manager_query(m,&bad.id,&found)==TINYRT_NOT_FOUND);
@@ -177,10 +171,14 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_manager_event(m,1,40,40,0,&frame)==TINYRT_OK);
     counter_frame("COUNTER V2","2",0x102a43);
     CHECK(kv->values[0]==2 && saves==2);
-    tinyrt_app_info_t foreign=install(m,argv[1],"counter-cross-publisher",TINYRT_VERIFY_FAILED);
-    CHECK(tinyrt_manager_query(m,&v2.id,&found)==TINYRT_OK);
+    /* Any other package for the ID replaces it and keeps data; ownership is the store's job. */
+    tinyrt_app_info_t foreign=install(m,argv[1],"counter-other-author",TINYRT_OK);
+    CHECK(tinyrt_manager_query(m,&foreign.id,&found)==TINYRT_OK);
+    CHECK(tinyrt_manager_query(m,&v2.id,&found)==TINYRT_NOT_FOUND);
+    CHECK(clears==old_clears&&kv->values[0]==2&&saves==2);
+    v2=install(m,argv[1],"counter-v2",TINYRT_OK); /* Downgrade is allowed. */
     CHECK(tinyrt_manager_query(m,&foreign.id,&found)==TINYRT_NOT_FOUND);
-    CHECK(kv->values[0]==2&&saves==2);
+    CHECK(clears==old_clears&&kv->values[0]==2&&saves==2);
     CHECK(tinyrt_manager_start(m,&v2.id,466,466,&frame)==TINYRT_OK);
     /* A failed back frame cannot be published; the caller's front stays owned. */
     previous=frame; fail_save=true; clock_ms+=5000;
@@ -216,7 +214,7 @@ int main(int argc,char **argv) {
     CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK && count==1 && listed[0].app.id.version==1);
     CHECK(tinyrt_manager_start(m,&v1.id,466,466,&frame)==TINYRT_OK);
     counter_frame("COUNTER V1","0",0x181818);
-    /* Real signed optional-stop guests: no render, failed callback cannot
+    /* Real optional-stop guests: no render, failed callback cannot
      * persist its host RAM changes, and every outcome releases the instance. */
     tinyrt_app_info_t stop=install(m,argv[1],"stop_valid",TINYRT_OK);
     kv_record_t *stop_kv=record("demo.stop");unsigned stop_saves=saves;
@@ -249,8 +247,8 @@ int main(int argc,char **argv) {
     }
     (void)install(m,argv[1],"stop_bad_signature",TINYRT_VERIFY_FAILED);
     CHECK(tinyrt_manager_query(m,&stop.id,&found)==TINYRT_OK);
-    /* Only one real signed package is corrupted. Reopening must preserve the
-     * healthy app, committed bad identity and original anti-downgrade floor. */
+    /* Only one real package is corrupted. Reopening must preserve the healthy
+     * app and the committed bad identity. */
     corrupt_package(argv[1],"stop_spin",200);
     CHECK(tinyrt_manager_start(m,&stop.id,466,466,&frame)==TINYRT_VERIFY_FAILED);
     CHECK(tinyrt_manager_list(m,listed,&count)==TINYRT_OK&&count==1);
@@ -343,11 +341,11 @@ int main(int argc,char **argv) {
     CHECK(frame.pixel_bytes==8&&frame.pixels[1]==0xf8&&frame.pixels[3]==0x07);
     CHECK(tinyrt_manager_stop(m)==TINYRT_OK);
     tinyrt_manager_close(m);
-#ifdef TINYRT_TEST_SIGNED_AOT
-    test_signed_aot(argv[1]);
+#ifdef TINYRT_TEST_AOT
+    test_aot(argv[1]);
 #endif
     tinyrt_runtime_system_shutdown();
     CHECK(tinyrt_runtime_memory_used()==0);
-    printf("INTEGRATION checks=%u PASS (real SHA256/P256/store/manager/WAMR; simulated NOR/KV)\n",checks);
+    printf("INTEGRATION checks=%u PASS (real SHA256/store/manager/WAMR; simulated NOR/KV)\n",checks);
     return 0;
 }

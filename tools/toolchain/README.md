@@ -25,6 +25,6 @@ python esp32/tinyrt/tools/toolchain/compile_fixtures.py --wamrc tmp/aot-toolchai
 
 `--enable-loop-poll` 独立于 Guest 多线程：它不设置 AOT 多线程 feature bit，也不要求共享内存。它读取执行环境的既有取消标志，采用 acquire 原子读取；运行库取消请求使用对应的原子写入。运行库仍需在执行结束后将取消状态转为失败，并由回调守卫实施绝对截止时间。
 
-编译参数和元数据只是可信编译链的一部分。产物需要经过运行库加载、板上安全矩阵和签名策略验证，才能成为允许外部安装的发布产物。
+编译参数和元数据只是可信编译链的一部分。产物需要经过运行库加载和板上安全矩阵验证，才能作为发布产物。
 
 依赖许可证与原始版权声明保留在源码及构建输出的 `licenses/`；除顶层许可证外，脚本保留 WAMR core/compiler、LLVM include/lib 中的单独声明文件和带版权信息的原始源码头，覆盖 LLVM Support 的 xxhash、Unicode 转换及 BSD 正则表达式声明。该目录采用保守范围，可能包含本次构建未链接的源码声明；各输出文件的 SHA-256 记录在 provenance 中。本地修改由固定补丁明确记录。

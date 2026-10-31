@@ -1,4 +1,4 @@
-# TinyRT core 0.1.0
+# TinyRT core
 
 TinyRT validates application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the
@@ -31,7 +31,7 @@ For an SDK host harness, include `cmake/HostWamr.cmake` from a C/C++ CMake
 project after setting WAMR_ROOT_DIR. It exposes `tinyrt_wamr` and
 `tinyrt_runtime`; link the latter for public headers and runtime dependencies.
 The root `tinyrt-run` executable validates raw Wasm and accepts bounded stdin
-events. Its output is host validation, not package trust or device acceptance.
+events. Its output is host validation, not device acceptance.
 
 ## Repository boundaries
 
@@ -40,14 +40,13 @@ copies from these contracts. `runtime/` owns package/store/manager/Wasm behavior
 `protocol/` owns portable management framing; `specs/` documents wire formats.
 Core tests use independent package encoders and frozen C/Wasm regression guests,
 so building this checkout does not require the SDK, EEBadge or ESP-IDF.
-Product-side tests moved to EEBadge `esp32/tests/tinyrt`.
+Product-side tests live in EEBadge `esp32/tests/host`.
 
 ## Optional round-screen drawing and normal stop
 
-ABI 1 now additionally accepts `draw_round_rect`, `draw_arc` and `draw_text_box`.
-Existing guests remain valid; new guests require a core revision supporting
-their imports, pinned by the SDK contract snapshot. Unknown imports remain a
-preflight rejection on older hosts. All drawing stays render-only, requires
+ABI 1 accepts `draw_round_rect`, `draw_arc` and `draw_text_box`.
+New guests require a core revision supporting their imports, pinned by the SDK
+contract snapshot; unknown imports are a preflight rejection. All drawing stays render-only, requires
 DRAW permission, copies values/text, and shares the 128-command limit. The
 host frame including the pixel extension requires caller-owned storage sized with `sizeof(tinyrt_frame_t)`. Runtime and manager
 write directly into caller-owned unpublished storage and retain no frame between
@@ -142,8 +141,7 @@ event 6 carries x=1, y=0 release/1 press and arg=0. Cancel clears held input.
 
 SDK `tinyrt.py run` drives this real WAMR classic interpreter and exports
 466×466 round-screen PNGs. Desktop timings are not device FPS, and desktop fonts
-need not match device fonts. The runner does not authenticate a signed package;
-installation trust remains in the package/store path.
+need not match device fonts.
 
 ## Source provenance
 
@@ -151,13 +149,12 @@ This extraction preserves the original source and notices without assigning a
 new project license. WAMR is obtained separately at a fixed revision and retains
 its upstream license. No keys are stored.
 
-## Optional raster graphics (0.0.3)
+## Optional raster graphics
 
-ABI 1 adds bounded batches, compact GRID, resident INDEX8/RGB565 textures and
+ABI 1 includes bounded batches, compact GRID, resident INDEX8/RGB565 textures and
 palettes, sprites with quarter-turn rotations, partial framebuffers, explicit
-damage, and CPU capability queries. Legacy graphics imports and package/AOT
-profiles stay compatible. The canonical guest header is
-[`contracts/guest-gfx-v1.h`](contracts/guest-gfx-v1.h). See the original
+damage, and CPU capability queries. The canonical guest header is
+[`contracts/guest-gfx-v1.h`](contracts/guest-gfx-v1.h). See the
 [record, ownership and renderer contract](specs/graphics-raster-v1.md) for limits,
 frame recycling, snapshot quotas and partial-update backpressure. A separately
 bounded 1152KiB graphics pool is additional to the 2MiB tracked runtime heap;

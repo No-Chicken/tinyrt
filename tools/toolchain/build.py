@@ -1,4 +1,4 @@
-"""Build a pinned Windows Xtensa wamrc from upstream WAMR and LLVM sources.
+"""Build a pinned Windows RISC-V wamrc from upstream WAMR and LLVM sources.
 
 Run in a Visual Studio x64 developer environment. CMake, Ninja, Git and Python
 must be installed; this script never downloads a prebuilt wamrc.
@@ -108,8 +108,8 @@ def main() -> None:
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--proxy", help="optional Git HTTPS proxy; no global Git changes")
     parser.add_argument("--resume", action="store_true", help="reuse already verified, patched sources")
-    parser.add_argument("--source-lock", type=Path, default=ROOT / "source-lock.json")
-    parser.add_argument("--riscv", action="store_true", help="build a separate RISC-V compiler using verified sources")
+    parser.add_argument("--source-lock", type=Path, default=ROOT / "source-lock-esp32s31.json")
+    parser.add_argument("--riscv", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if os.name != "nt" or not shutil.which("cl"):
         parser.error("run in a Visual Studio x64 developer environment on Windows")
@@ -127,9 +127,7 @@ def main() -> None:
     if args.proxy:
         git += ["-c", "http.proxy=" + args.proxy]
     wamr, llvm = work / "wamr-upstream", work / "llvm-project"
-    llvm_build, wamrc_build = work / "llvm-build", work / "wamrc-build"
-    if args.riscv:
-        wamrc_build = work / "wamrc-build-riscv"
+    llvm_build, wamrc_build = work / "llvm-build", work / "wamrc-build-riscv"
     patches = [(lock_path.parent / name).resolve() for name in lock["patches"]]
     if any(not patch.is_file() for patch in patches):
         raise RuntimeError("a locked source patch is missing")
@@ -163,7 +161,7 @@ def main() -> None:
     common = ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_FLAGS=/utf-8",
               "-DCMAKE_CXX_FLAGS=/utf-8"]
     llvm_command = ["cmake", "-S", str(llvm / "llvm"), "-B", str(llvm_build), *common,
-        "-DLLVM_ENABLE_DIA_SDK=OFF", "-DLLVM_TARGETS_TO_BUILD=" + ("X86;RISCV" if args.riscv else "X86"),
+        "-DLLVM_ENABLE_DIA_SDK=OFF", "-DLLVM_TARGETS_TO_BUILD=X86;RISCV",
         "-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa", "-DLLVM_INCLUDE_TESTS=OFF",
         "-DLLVM_INCLUDE_EXAMPLES=OFF", "-DLLVM_INCLUDE_BENCHMARKS=OFF", "-DLLVM_INCLUDE_DOCS=OFF",
         "-DLLVM_ENABLE_TERMINFO=OFF", "-DLLVM_ENABLE_ZLIB=OFF", "-DLLVM_ENABLE_ZSTD=OFF",
@@ -201,7 +199,7 @@ def main() -> None:
     licenses = wamrc_build / "licenses"
     licenses.mkdir(exist_ok=True)
     manifest["licenses"] = collect_licenses(wamr, llvm, licenses)
-    (work / ("provenance-riscv.json" if args.riscv else "provenance.json")).write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    (work / "provenance-riscv.json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(manifest, indent=2))
 
 

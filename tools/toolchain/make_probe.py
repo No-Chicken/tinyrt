@@ -32,7 +32,7 @@ wasm += section(10, uleb(len(bodies)) + b"".join(uleb(len(body)) + body for body
 wasm_path = args.output / "safety-probe.wasm"
 aot_path = args.output / "safety-probe.aot"
 wasm_path.write_bytes(wasm)
-lock = json.loads(Path(__file__).with_name("source-lock.json").read_text(encoding="utf-8"))
+lock = json.loads(Path(__file__).with_name("source-lock-esp32s31.json").read_text(encoding="utf-8"))
 subprocess.run([str(args.wamrc), *lock["target_options"], "-o", str(aot_path), str(wasm_path)], check=True)
 manifest = {"functions": [{"name": name, "signature": "() -> i32", "expected": expected}
                           for name, _, expected in cases],

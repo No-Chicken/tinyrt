@@ -68,10 +68,10 @@ def main() -> None:
     parser.add_argument("--wamrc", required=True, type=Path)
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--example", type=Path)
-    parser.add_argument("--objdump", type=Path, help="Xtensa objdump for machine-code verification")
+    parser.add_argument("--objdump", type=Path, help="RISC-V objdump for machine-code verification")
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
-    lock = json.loads(Path(__file__).with_name("source-lock.json").read_text(encoding="utf-8"))
+    lock = json.loads(Path(__file__).with_name("source-lock-esp32s31.json").read_text(encoding="utf-8"))
     flags = lock["target_options"]
     evidence = {"wamrc_sha256": sha(args.wamrc), "flags": flags, "cases": []}
     for with_memory in (True, False):
@@ -99,11 +99,11 @@ def main() -> None:
             (args.output / f"{stem}.dis").write_text(dis, encoding="utf-8")
             machine_funcs = re.findall(r"^[0-9a-f]+ <aot_func_internal#[0-9]+>:\n(.*?)(?=\n[0-9a-f]+ <|\Z)",
                                        dis, re.MULTILINE | re.DOTALL)
-            assert len(machine_funcs) == 4, "missing Xtensa function bodies"
+            assert len(machine_funcs) == 4, "missing RISC-V function bodies"
             for index, body in enumerate(machine_funcs):
-                assert "memw" in body, f"{stem} machine function {index} misses memory ordering"
-                assert re.search(r"l32i(?:\.n)?\s+a[0-9]+, a[0-9]+, 20\b", body), f"{stem} machine function {index} misses flag load"
-                assert re.search(r"\b(?:beqz|bnez)(?:\.n)?\b", body), f"{stem} machine function {index} misses conditional exit"
+                assert re.search(r"\bfence\s+r,\s*rw\b", body), f"{stem} machine function {index} misses memory ordering"
+                assert re.search(r"\blw\s+\w+,\s*20\(\w+\)", body), f"{stem} machine function {index} misses flag load"
+                assert re.search(r"\b(?:beqz|bnez)\b", body), f"{stem} machine function {index} misses conditional exit"
         aot = args.output / f"{stem}.aot"
         run([str(args.wamrc), *flags, "-o", str(aot), str(wasm)])
         version, features = aot_features(aot)

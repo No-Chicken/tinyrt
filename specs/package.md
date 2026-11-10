@@ -13,7 +13,7 @@
 | 24 | u32 section_entry_size=16 |
 | 28 | u32 reserved=0 |
 
-offset32..151 的字段如下表；字符串 NUL 终止，NUL 后全零。offset152 为 32 字节 SHA-256，覆盖 `package[256:total_size]`，包括 section 表、对齐填充、AOT 元数据和所有 section 内容。offset184..191 仍全零。offset192..255 为规范 low-S P-256 `r32||s32`。
+offset32..151 的字段如下表；字符串 NUL 终止，NUL 后全零。offset152 为 32 字节 SHA-256，覆盖 `package[256:total_size]`，包括 section 表、对齐填充、AOT 元数据和所有 section 内容。offset184 的小端 u32 表示最低 API Level，读取 0 按 Level 1 处理，SDK 对 Level 1 写 0。更高 Level 写实际值。offset188..191 保留为零。offset192..255 为规范 low-S P-256 `r32||s32`。
 
 | 偏移 | 字段 |
 |---|---|

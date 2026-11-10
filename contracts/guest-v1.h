@@ -1,6 +1,9 @@
 #ifndef TINYRT_SDK_H
 #define TINYRT_SDK_H
 #include <stdint.h>
+#define TINYRT_API_LEVEL_BASE 1
+#define TINYRT_API_LEVEL TINYRT_API_LEVEL_BASE
+#define TINYRT_ERR_UNAVAILABLE (-2)
 #if defined(__wasm__)
 #define TINYRT_IMPORT(name) __attribute__((import_module("tinyrt"), import_name(#name)))
 #else

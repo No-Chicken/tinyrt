@@ -7,16 +7,25 @@ import unittest
 ROOT = Path(__file__).resolve().parents[2]
 
 class ContractTests(unittest.TestCase):
+    def test_capabilities_declare_supported_levels(self):
+        spec = json.loads((ROOT / "contracts/abi-v1.json").read_bytes())
+        items = list(spec["imports"])
+        for group in ("events", "input_masks", "permissions"):
+            items.extend(spec[group].values())
+        for item in items:
+            self.assertGreaterEqual(item["since_level"], 1)
+            self.assertLessEqual(item["since_level"], spec["api_level"])
+
     def test_bounded_haptic_contract(self):
         spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
-        self.assertIn({'name':'haptic_pulse','signature':'(ii)i','permission':32},spec['imports'])
-        self.assertIn({'name':'haptic_stop','signature':'()i','permission':32},spec['imports'])
+        self.assertIn({'name':'haptic_pulse','signature':'(ii)i','permission':32,'since_level':1},spec['imports'])
+        self.assertIn({'name':'haptic_stop','signature':'()i','permission':32,'since_level':1},spec['imports'])
         self.assertEqual(spec['haptic']['max_duration_ms'],2000)
         self.assertEqual(spec['haptic']['stages'],['init','event'])
 
     def test_bounded_audio_contract(self):
         spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
-        self.assertIn({'name':'audio_play','signature':'(iii)i','permission':16},spec['imports'])
+        self.assertIn({'name':'audio_play','signature':'(iii)i','permission':16,'since_level':1},spec['imports'])
         self.assertEqual(spec['audio']['max_bytes'],32000)
         self.assertEqual(spec['audio']['sample_rate'],16000)
         self.assertEqual(spec['audio']['stages'],['init','event'])
@@ -46,7 +55,7 @@ class ContractTests(unittest.TestCase):
             arity = 0 if args.strip() == "void" else args.count(",") + 1
             self.assertEqual(arity, expected["signature"].split(")")[0].count("i"), name)
         for name, value in spec["events"].items():
-            self.assertRegex(header, r"#define " + name + " " + str(value) + r"\b")
+            self.assertRegex(header, r"#define " + name + " " + str(value["value"]) + r"\b")
         self.assertEqual([x["name"] for x in spec["exports"] if x.get("optional")], ["tinyrt_stop"])
         for item in spec["exports"]:
             declaration = re.search(r'int32_t ' + item["name"] + r'\(([^;]*)\);', header)

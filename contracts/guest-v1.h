@@ -2,7 +2,8 @@
 #define TINYRT_SDK_H
 #include <stdint.h>
 #define TINYRT_API_LEVEL_BASE 1
-#define TINYRT_API_LEVEL TINYRT_API_LEVEL_BASE
+#define TINYRT_API_LEVEL_SYSTEM 2
+#define TINYRT_API_LEVEL TINYRT_API_LEVEL_SYSTEM
 #define TINYRT_ERR_UNAVAILABLE (-2)
 #if defined(__wasm__)
 #define TINYRT_IMPORT(name) __attribute__((import_module("tinyrt"), import_name(#name)))
@@ -15,6 +16,8 @@ TINYRT_IMPORT(asset_read) int32_t asset_read(uint32_t offset,void *destination,u
 TINYRT_IMPORT(audio_play) int32_t audio_play(uint32_t resource_offset,uint32_t byte_length,uint32_t sample_rate);
 /* CLOCK=8, init/event only, interval1..1000ms. */
 TINYRT_IMPORT(clock_interval) int32_t clock_interval(int32_t ms);
+/* UTF-8, max 128 bytes, at most 50 messages per second per instance. */
+TINYRT_IMPORT(debug_log) int32_t debug_log(const char *text,uint32_t length);
 TINYRT_IMPORT(draw_arc) int32_t draw_arc(int32_t cx,int32_t cy,int32_t radius,int32_t thickness,int32_t start_deg,int32_t end_deg,uint32_t rgb);
 TINYRT_IMPORT(draw_clear) int32_t draw_clear(uint32_t rgb);
 TINYRT_IMPORT(draw_rect) int32_t draw_rect(int32_t x,int32_t y,int32_t w,int32_t h,uint32_t rgb);
@@ -50,8 +53,15 @@ TINYRT_IMPORT(input_events) int32_t input_events(uint32_t mask);
 TINYRT_IMPORT(kv_get) int32_t kv_get(uint32_t key,int32_t fallback);
 TINYRT_IMPORT(kv_set) int32_t kv_set(uint32_t key,int32_t value);
 TINYRT_IMPORT(now_ms) uint32_t now_ms(void);
+TINYRT_IMPORT(random_u32) uint32_t random_u32(void);
 /* 0 instruction-metered interpreter,1 deadline-guarded AOT. */
 TINYRT_IMPORT(runtime_backend) int32_t runtime_backend(void);
+typedef struct {
+    uint32_t api_level, screen_w, screen_h, safe_x, safe_y, safe_w, safe_h;
+    uint32_t mem_pages_max, budget_max;
+} tinyrt_sys_info_t;
+/* Writes nine little-endian u32 fields; returns -2 if the buffer is too small. */
+TINYRT_IMPORT(sys_info) int32_t sys_info(void *destination,uint32_t length);
 #define TINYRT_TOUCH_RELEASE 1
 #define TINYRT_CLOCK_EVENT 2
 #define TINYRT_TOUCH_PRESS 3

@@ -377,6 +377,14 @@ static tinyrt_status_t host_set(void *ctx, uint32_t key, int32_t value) {
     m->values[key] = value;
     return TINYRT_OK;
 }
+static void host_log(void *ctx,const char *text,uint32_t length) {
+    tinyrt_manager_t *m=ctx;
+    if(m->storage.debug_log) m->storage.debug_log(m->storage.ctx,m->running.id.app_id,text,length);
+}
+static uint32_t host_random(void *ctx) {
+    tinyrt_manager_t *m=ctx;
+    return m->storage.random_u32(m->storage.ctx);
+}
 static uint32_t host_now(void *ctx) {
     tinyrt_manager_t *m = ctx;
     return m->storage.now_ms(m->storage.ctx);
@@ -487,7 +495,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {

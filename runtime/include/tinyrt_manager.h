@@ -9,6 +9,8 @@ typedef struct {
     tinyrt_status_t (*save)(void *,const char *,uint32_t,const int32_t values[16]);
     tinyrt_status_t (*clear)(void *,const char *);
     uint32_t (*now_ms)(void *);
+    void (*debug_log)(void *,const char *app_id,const char *text,uint32_t length);
+    uint32_t (*random_u32)(void *);
 } tinyrt_manager_storage_t;
 /* Adapter copies PCM before returning; stop discards queued/in-progress audio.
  * Adapter context outlives manager; callbacks never retain manager pointers. */

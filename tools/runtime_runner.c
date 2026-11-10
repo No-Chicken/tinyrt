@@ -7,12 +7,29 @@
 #include <string.h>
 #ifdef _WIN32
 #include <windows.h>
+#include <bcrypt.h>
 #else
 #include <time.h>
 #endif
 
 typedef struct { uint32_t mask; int32_t values[16]; } saved_t;
 static saved_t saved;
+static void desktop_log(void *ctx,const char *text,uint32_t length) {
+    (void)ctx;
+    printf("app: %.*s\n",(int)length,text);
+}
+static uint32_t desktop_random(void *ctx) {
+    uint32_t value;
+    (void)ctx;
+#ifdef _WIN32
+    if(BCryptGenRandom(NULL,(PUCHAR)&value,sizeof(value),BCRYPT_USE_SYSTEM_PREFERRED_RNG)!=0) exit(1);
+#else
+    FILE *source=fopen("/dev/urandom","rb");
+    if(!source || fread(&value,sizeof(value),1,source)!=1) exit(1);
+    fclose(source);
+#endif
+    return value;
+}
 static uint32_t now_ms_value, commits;
 static uint32_t clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 static uint64_t next_clock_deadline=UINT64_MAX;
@@ -167,7 +184,7 @@ static int usage(void) {
 }
 int main(int argc, char **argv) {
     if (argc<2 || !strcmp(argv[1],"--help")) return usage();
-    tinyrt_package_policy_t policy={1,15,2,100000};
+    tinyrt_package_policy_t policy={1,15,2,100000,TINYRT_HOST_API_LEVEL};
     for (int i=2;i<argc;i+=2) {
         uint32_t value;
         if(i+1<argc && !strcmp(argv[i],"--assets")) {
@@ -197,7 +214,7 @@ int main(int argc, char **argv) {
     if (count!=(size_t)length || close_result) { free(bytes); return 2; }
     int exit_code=0;
     if (tinyrt_runtime_system_init()!=TINYRT_OK) { free(bytes); return 1; }
-    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL};
+    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL,desktop_log,desktop_random};
     tinyrt_runtime_t *rt=NULL;
     tinyrt_status_t result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
     if (result!=TINYRT_OK) { emit("create",result,"Wasm load rejected",0); exit_code=1; goto done; }

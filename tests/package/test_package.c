@@ -62,7 +62,7 @@ int main(int argc,char **argv) {
     config.require_aot_on_install=false;
     data[184]=1;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
-    data[184]=2;
+    data[184]=TINYRT_HOST_API_LEVEL+1;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_ERR_API_LEVEL);
     data[184]=0;
     tinyrt_app_info_t app;

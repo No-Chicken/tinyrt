@@ -112,6 +112,7 @@ struct tinyrt_runtime {
     int32_t width, height;
     uint32_t clock_interval_ms, callback, input_events, audio_requests;
     bool ready, failed, stopped, skipped, aot;
+    uint32_t log_since_ms, log_count, log_dropped;
     char error[192];
 };
 
@@ -379,12 +380,47 @@ static uint32_t now_ms(wasm_exec_env_t e)
 }
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
+static int32_t debug_log(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!r->host.debug_log || !r->host.now_ms || !length || length>128 ||
+       !wasm_runtime_validate_app_addr(r->instance,ptr,length)) return 0;
+    const uint8_t *text=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if(!text || !utf8(text,length)) return 0;
+    uint32_t now=r->host.now_ms(r->host.ctx);
+    if(now-r->log_since_ms>=1000) {r->log_since_ms=now;r->log_count=0;}
+    if(r->log_count>=50) {++r->log_dropped;return 0;}
+    ++r->log_count;
+    r->host.debug_log(r->host.ctx,(const char *)text,length);
+    return 0;
+}
+static uint32_t random_u32(wasm_exec_env_t e)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!r->host.random_u32) {fail(r,"random source unavailable");return 0;}
+    return r->host.random_u32(r->host.ctx);
+}
+static int32_t sys_info(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    const uint32_t w=(uint32_t)r->width,h=(uint32_t)r->height;
+    /* A centered square inscribed in the circular viewport. */
+    const uint32_t side=(uint32_t)((uint64_t)(w<h?w:h)*7071u/10000u);
+    const uint32_t fields[]={TINYRT_HOST_API_LEVEL,w,h,(w-side)/2,(h-side)/2,side,side,16,100000};
+    if(length<sizeof(fields)) return -2;
+    if(!wasm_runtime_validate_app_addr(r->instance,ptr,sizeof(fields))) return fail(r,"sys_info out of bounds");
+    void *dst=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if(!dst) return fail(r,"sys_info out of bounds");
+    memcpy(dst,fields,sizeof(fields));
+    return 0;
+}
 static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 : 0; }
 #include "tinyrt_gfx_imports.inc"
 static NativeSymbol natives[] = {
     { "asset_read", (void *)asset_read, "(iii)i", NULL },
     { "audio_play", (void *)audio_play, "(iii)i", NULL },
     { "clock_interval", (void *)clock_interval, "(i)i", NULL },
+    { "debug_log", (void *)debug_log, "(ii)i", NULL },
     { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
     { "draw_rect", (void *)draw_rect, "(iiiii)i", NULL },
@@ -411,11 +447,13 @@ static NativeSymbol natives[] = {
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL },
-    { "runtime_backend", (void *)runtime_backend, "()i", NULL }
+    { "random_u32", (void *)random_u32, "()i", NULL },
+    { "runtime_backend", (void *)runtime_backend, "()i", NULL },
+    { "sys_info", (void *)sys_info, "(ii)i", NULL }
 };
-static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 1, 2, 2, 0, 0 };
-static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 2, 4, 4, 8, 0 };
-static const unsigned since_level[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
+static const unsigned arity[] = { 3, 3, 1, 2, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 1, 2, 2, 0, 0, 0, 2 };
+static const uint32_t required_permission[] = { 0, 16, 8, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 2, 4, 4, 8, 0, 0, 0 };
+static const unsigned since_level[] = { 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 

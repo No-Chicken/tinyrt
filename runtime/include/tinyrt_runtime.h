@@ -63,6 +63,8 @@ typedef struct {
     /* Optional nonblocking haptics; BUSY means unavailable. */
     tinyrt_status_t (*haptic_pulse)(void *,uint32_t strength,uint32_t duration_ms);
     tinyrt_status_t (*haptic_stop)(void *);
+    void (*debug_log)(void *,const char *text,uint32_t length);
+    uint32_t (*random_u32)(void *);
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

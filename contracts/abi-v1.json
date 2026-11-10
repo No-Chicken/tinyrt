@@ -1,6 +1,6 @@
 {
   "abi_version": 1,
-  "api_level": 1,
+  "api_level": 2,
   "module": "tinyrt",
   "imports": [
     {
@@ -20,6 +20,12 @@
       "signature": "(i)i",
       "permission": 8,
       "since_level": 1
+    },
+    {
+      "name": "debug_log",
+      "signature": "(ii)i",
+      "permission": 0,
+      "since_level": 2
     },
     {
       "name": "draw_arc",
@@ -178,10 +184,22 @@
       "since_level": 1
     },
     {
+      "name": "random_u32",
+      "signature": "()i",
+      "permission": 0,
+      "since_level": 2
+    },
+    {
       "name": "runtime_backend",
       "signature": "()i",
       "permission": 0,
       "since_level": 1
+    },
+    {
+      "name": "sys_info",
+      "signature": "(ii)i",
+      "permission": 0,
+      "since_level": 2
     }
   ],
   "exports": [

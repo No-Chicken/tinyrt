@@ -16,13 +16,17 @@ tinyrt_status_t tinyrt_manager_last_crash(const tinyrt_manager_t *manager, tinyr
 #define TINYRT_MANAGER_SAVE_INTERVAL_MS 5000u
 typedef struct {
     void *ctx;
-    tinyrt_status_t (*load)(void *,const char *,uint32_t *,int32_t values[16]);
-    tinyrt_status_t (*save)(void *,const char *,uint32_t,const int32_t values[16]);
+    tinyrt_status_t (*load)(void *,const char *,uint32_t *,int32_t *values);
+    tinyrt_status_t (*save)(void *,const char *,uint32_t,const int32_t *values);
     tinyrt_status_t (*clear)(void *,const char *);
     uint32_t (*now_ms)(void *);
     void (*debug_log)(void *,const char *app_id,const char *text,uint32_t length);
     uint32_t (*random_u32)(void *);
     const tinyrt_device_api_t *device;
+    /* Zero selects the original 16-slot load/save adapter. */
+    uint32_t kv_keys;
+    int32_t (*blob_read)(const char *app_id,void *dst,uint32_t capacity);
+    tinyrt_status_t (*save_state)(const char *id,uint32_t mask,const int32_t *values,const void *blob,uint32_t length);
 } tinyrt_manager_storage_t;
 /* Adapter copies PCM before returning; stop discards queued/in-progress audio.
  * Adapter context outlives manager; callbacks never retain manager pointers. */

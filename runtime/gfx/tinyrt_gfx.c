@@ -1170,7 +1170,8 @@ static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
       int sw = c->kind == TINYRT_DRAW_RGB565 ? c->w : c->source_w,
           sh = c->kind == TINYRT_DRAW_RGB565 ? c->h : c->source_h;
       if (sw <= 0 || sh <= 0 || c->w <= 0 || c->h <= 0 ||
-          (uint32_t)sw * (uint32_t)sh * 2 > f->pixel_bytes)
+          sw>256 || sh>240 || f->pixel_bytes>sizeof(f->pixels) || c->pixel_offset>f->pixel_bytes ||
+          (uint32_t)sw * (uint32_t)sh * 2 > f->pixel_bytes-c->pixel_offset)
         return -1;
       int x0 = max_i(c->x, (int)x),
           x1 = min_i(c->x + c->w, (int)(x + region_width)),
@@ -1180,7 +1181,7 @@ static int render_region_impl(const tinyrt_frame_t *f, uint16_t *dst,
           uint32_t sx = (uint32_t)(xx - c->x) * (uint32_t)sw / (uint32_t)c->w,
                    sy = (uint32_t)(yy - c->y) * (uint32_t)sh / (uint32_t)c->h;
           dst[(uint32_t)(yy - (int)y) * stride + (uint32_t)xx] =
-              (uint16_t)u16(f->pixels + 2 * (sy * (uint32_t)sw + sx));
+              (uint16_t)u16(f->pixels + c->pixel_offset + 2 * (sy * (uint32_t)sw + sx));
         }
       continue;
     } else

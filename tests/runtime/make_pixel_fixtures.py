@@ -42,6 +42,11 @@ def fixtures():
         result["pixel_"+name] = guest(imports, clear + code(bad,1) + c(0), payload=payload)
     result["pixel_edge_valid"] = guest(imports,clear+code([464,464,2,2,65528,8],1)+c(0))
     result["pixel_twice"] = guest(imports,clear+draw+draw+c(0),payload=payload)
+    # Two owned snapshots, separated by a guest mutation.
+    result["pixel_pair"] = guest(imports,clear+draw+mutate+draw+c(0),payload=payload)
+    result["pixel_sum_overflow"] = guest(imports,clear+code([105,113,256,240,0,122880],1)+draw+c(0),memory_pages=2)
+    text_imports=[("draw_clear",1),("draw_text",5)]
+    result["quota_text64"] = guest(text_imports,clear+code([0,0,0,64,0xffffff],1)+c(0),payload=b"A"*64)
     result["pixel_noclear"] = guest(imports,draw+c(0),payload=payload)
     result["pixel_cap"] = guest(imports,clear*128+draw+c(0),payload=payload)
     result["skip_valid"] = guest(imports,skip+c(0))

@@ -11,6 +11,8 @@ extern "C" {
 /* 单包上限为整个数据区（总区减两个目录扇区），不再单独限制；更新仍需另一段连续空闲区暂存。 */
 #define TINYRT_STORE_MAX_PACKAGE_SIZE ((uint32_t)(TINYRT_STORE_SIZE) - 2u * TINYRT_STORE_SECTOR_SIZE)
 #define TINYRT_STORE_MAX_APPS 16u
+#define TINYRT_KV_KEYS_BASE 16u
+#define TINYRT_KV_KEYS_MAX 24u
 typedef struct tinyrt_store tinyrt_store_t;
 typedef struct tinyrt_install tinyrt_install_t;
 typedef struct { char app_id[32]; uint32_t version; uint8_t sha256[32]; } tinyrt_package_id_t;

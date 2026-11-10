@@ -8,7 +8,7 @@ extern "C" {
 #endif
 #define TINYRT_PACKAGE_HEADER_SIZE 256u
 #define TINYRT_PACKAGE_ABI_VERSION 1u
-#define TINYRT_HOST_API_LEVEL 3u
+#define TINYRT_HOST_API_LEVEL 4u
 #define TINYRT_PERMISSION_DRAW 1u
 #define TINYRT_PERMISSION_INPUT 2u
 #define TINYRT_PERMISSION_STORAGE 4u
@@ -18,11 +18,30 @@ extern "C" {
 #define TINYRT_PERMISSION_SENSOR 128u
 #define TINYRT_PERMISSION_SYSTEM 256u
 #define TINYRT_PERMISSION_ACCESSORY 512u
-#define TINYRT_PERMISSION_ALL 447u
+#define TINYRT_PERMISSION_ALL 959u
 typedef struct {
     uint32_t abi_version, permissions, max_memory_pages, instruction_budget;
     uint32_t min_api_level; /* Zero-initialized policies use the Level 1 baseline. */
 } tinyrt_package_policy_t;
+#define TINYRT_FRAME_MAX_COMMANDS 144u
+#define TINYRT_TEXT_MAX_BYTES 95u
+#define TINYRT_FRAME_MAX_IMAGES 2u
+#define TINYRT_MAX_MEMORY_PAGES 20u
+#define TINYRT_MAX_INSTRUCTIONS 125000u
+
+typedef struct {
+    uint32_t commands,text_bytes,images,memory_pages,instructions,kv_keys;
+} tinyrt_limits_t;
+
+static inline tinyrt_limits_t tinyrt_limits_for_level(uint32_t level) {
+    if (level>=4) {
+        const tinyrt_limits_t limits={TINYRT_FRAME_MAX_COMMANDS,TINYRT_TEXT_MAX_BYTES,TINYRT_FRAME_MAX_IMAGES,
+                                      TINYRT_MAX_MEMORY_PAGES,TINYRT_MAX_INSTRUCTIONS,TINYRT_KV_KEYS_MAX};
+        return limits;
+    }
+    const tinyrt_limits_t legacy={128,63,1,16,100000,TINYRT_KV_KEYS_BASE};
+    return legacy;
+}
 #define TINYRT_AOT_LOOP_POLL 1u
 #define TINYRT_AOT_BOUNDS_CHECKS 2u
 #define TINYRT_AOT_STACK_CHECKS 4u

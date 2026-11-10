@@ -13,7 +13,7 @@
 #include <time.h>
 #endif
 
-typedef struct { uint32_t mask; int32_t values[16]; } saved_t;
+typedef struct { uint32_t mask; int32_t values[TINYRT_KV_KEYS_MAX]; uint32_t blob_len; uint8_t blob[2048]; } saved_t;
 static saved_t saved;
 static void desktop_log(void *ctx,const char *text,uint32_t length) {
     (void)ctx;
@@ -49,7 +49,41 @@ static int32_t sim_datetime(int32_t values[9]) {
                        t->tm_wday,sim_utc_offset,sim_time_valid};
     memcpy(values,result,sizeof(result));return sim_time_valid?0:-2;
 }
-static const tinyrt_device_api_t sim_device={sim_config,sim_motion,sim_datetime,sim_power,sim_set_brightness,sim_set_keep_on};
+static uint32_t sim_audio_bytes,sim_audio_ms;
+static int32_t sim_queue_free(void) {
+    uint32_t elapsed=now_ms_value-sim_audio_ms;
+    sim_audio_ms=now_ms_value;
+    if(elapsed>=250) sim_audio_bytes=0;
+    else if(sim_audio_bytes>elapsed*32) sim_audio_bytes-=elapsed*32;
+    else sim_audio_bytes=0;
+    return (int32_t)(8000-sim_audio_bytes);
+}
+static int32_t sim_write_audio(const void *pcm,uint32_t len) {
+    (void)pcm;uint32_t room=(uint32_t)sim_queue_free();
+    if(!room)return -2;
+    if(len>room)len=room;
+    sim_audio_bytes+=len;return (int32_t)len;
+}
+static int32_t sim_tone(uint32_t freq,uint32_t ms) {(void)freq;(void)ms;return 0;}
+static int32_t sim_pattern(const uint16_t *steps,uint32_t count) {(void)steps;(void)count;return 0;}
+static int32_t sim_blob_read(void *ctx,void *dst,uint32_t size) {
+    (void)ctx;if(size<saved.blob_len)return -2;
+    if(saved.blob_len)memcpy(dst,saved.blob,saved.blob_len);
+    return (int32_t)saved.blob_len;
+}
+static int32_t sim_blob_write(void *ctx,const void *src,uint32_t size) {
+    (void)ctx;if(size>sizeof(saved.blob))return -2;
+    if(size)memcpy(saved.blob,src,size);
+    saved.blob_len=size;return (int32_t)size;
+}
+static int32_t sim_acc_send(uint32_t type,const void *src,uint32_t size) {(void)type;(void)src;(void)size;return -2;}
+static int32_t sim_acc_read(void *dst,uint32_t size) {(void)dst;(void)size;return -2;}
+static const tinyrt_device_api_t sim_device={
+    .imu_config=sim_config,.imu_read=sim_motion,.time_local=sim_datetime,.battery_info=sim_power,
+    .display_brightness=sim_set_brightness,.screen_keep_on=sim_set_keep_on,.audio_write=sim_write_audio,
+    .audio_queue_free=sim_queue_free,.audio_tone=sim_tone,.haptic_pattern=sim_pattern,
+    .acc_send=sim_acc_send,.acc_read=sim_acc_read
+};
 static uint32_t clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 static uint64_t next_clock_deadline=UINT64_MAX;
 static tinyrt_frame_t frame;
@@ -81,11 +115,11 @@ static double milliseconds(void) {
 }
 static int32_t get_value(void *ctx, uint32_t key, int32_t fallback) {
     (void)ctx;
-    return key < 16 && (saved.mask & (1u << key)) ? saved.values[key] : fallback;
+    return key < TINYRT_KV_KEYS_MAX && (saved.mask & (1u << key)) ? saved.values[key] : fallback;
 }
 static tinyrt_status_t set_value(void *ctx, uint32_t key, int32_t value) {
     (void)ctx;
-    if (key >= 16) return TINYRT_INVALID_ARGUMENT;
+    if (key >= TINYRT_KV_KEYS_MAX) return TINYRT_INVALID_ARGUMENT;
     saved.mask |= 1u << key; saved.values[key] = value; return TINYRT_OK;
 }
 static uint32_t now(void *ctx) { (void)ctx; return now_ms_value; }
@@ -110,7 +144,8 @@ static void emit(const char *phase, tinyrt_status_t status, const char *error, d
         ",\"heap_bytes\":%zu,\"elapsed_ms\":%.6f,\"error\":",(int)status,now_ms_value,
         commits,tinyrt_runtime_memory_used(),elapsed); json_string(error);
     printf(",\"kv\":[");
-    for (uint32_t k=0;k<16;++k) {
+    uint32_t keys = saved.mask >> TINYRT_KV_KEYS_BASE ? TINYRT_KV_KEYS_MAX : TINYRT_KV_KEYS_BASE;
+    for (uint32_t k=0;k<keys;++k) {
         if (k) putchar(',');
         if (saved.mask & (1u << k)) printf("%" PRId32,saved.values[k]); else printf("null");
     }
@@ -128,7 +163,10 @@ static void emit(const char *phase, tinyrt_status_t status, const char *error, d
                 ",\"font_px\":%" PRId32 ",\"align\":%" PRId32 ",\"text\":",
                 c->source_w,c->source_h,c->kind,c->x,c->y,c->w,c->h,c->rgb,c->radius,c->thickness,
                 c->start_angle,c->end_angle,c->font_px,c->align);
-            json_string(c->text); putchar('}');
+            json_string(c->text);
+            if (c->kind==TINYRT_DRAW_RGB565 || c->kind==TINYRT_DRAW_RGB565_SCALED)
+                printf(",\"pixel_offset\":%" PRIu32,c->pixel_offset);
+            putchar('}');
         }
     }
     printf("]");
@@ -193,7 +231,7 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
     return result;
 }
 static int usage(void) {
-    fprintf(stderr,"Usage: tinyrt-run app.wasm [--pages 1..16] [--budget 1..100000] [--permissions 0..31] [--assets resources.bin]\n"
+    fprintf(stderr,"Usage: tinyrt-run app.wasm [--min-api-level level] [--pages pages] [--budget instructions] [--permissions mask] [--assets resources.bin]\n"
         "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1> | motion <ax_mg> <ay_mg> <az_mg>\n"
         "       gamepad <buttons> <lx> <ly> <rx> <ry> <lt> <rt> <connected 0|1>\n"
         "       time <uint32_ms> | tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
@@ -203,7 +241,7 @@ static int usage(void) {
 }
 int main(int argc, char **argv) {
     if (argc<2 || !strcmp(argv[1],"--help")) return usage();
-    tinyrt_package_policy_t policy={1,15,2,100000,TINYRT_HOST_API_LEVEL};
+    tinyrt_package_policy_t policy={1,15,2,100000,1};
     for (int i=2;i<argc;i+=2) {
         uint32_t value;
         if(i+1<argc && !strcmp(argv[i],"--assets")) {
@@ -217,11 +255,14 @@ int main(int argc, char **argv) {
             resources_size=(uint32_t)n;continue;
         }
         if (i+1>=argc || !parse_u32(argv[i+1],&value)) return usage();
-        if (!strcmp(argv[i],"--pages") && value>=1 && value<=16) policy.max_memory_pages=value;
-        else if (!strcmp(argv[i],"--budget") && value>=1 && value<=100000) policy.instruction_budget=value;
+        if (!strcmp(argv[i],"--pages") && value>=1) policy.max_memory_pages=value;
+        else if (!strcmp(argv[i],"--budget") && value>=1) policy.instruction_budget=value;
+        else if (!strcmp(argv[i],"--min-api-level") && value>=1 && value<=TINYRT_HOST_API_LEVEL) policy.min_api_level=value;
         else if (!strcmp(argv[i],"--permissions") && value<=TINYRT_PERMISSION_ALL) policy.permissions=value;
         else return usage();
     }
+    tinyrt_limits_t limits=tinyrt_limits_for_level(policy.min_api_level);
+    if (policy.max_memory_pages>limits.memory_pages || policy.instruction_budget>limits.instructions) return usage();
     FILE *f=fopen(argv[1],"rb");
     if (!f) { fprintf(stderr,"Cannot open Wasm file\n"); return 2; }
     if (fseek(f,0,SEEK_END)) { fclose(f); return 2; }
@@ -233,7 +274,7 @@ int main(int argc, char **argv) {
     if (count!=(size_t)length || close_result) { free(bytes); return 2; }
     int exit_code=0;
     if (tinyrt_runtime_system_init()!=TINYRT_OK) { free(bytes); return 1; }
-    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL,desktop_log,desktop_random,&sim_device};
+    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL,desktop_log,desktop_random,&sim_device,sim_blob_read,sim_blob_write};
     tinyrt_runtime_t *rt=NULL;
     tinyrt_status_t result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
     if (result!=TINYRT_OK) { emit("create",result,"Wasm load rejected",0); exit_code=1; goto done; }

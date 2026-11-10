@@ -70,6 +70,32 @@ static void pixels(void) {
   CHECK(frame.count==0&&tinyrt_runtime_last_error(r)[0]);
   CHECK(tinyrt_runtime_stop(r)==TINYRT_VERIFY_FAILED);close_guest(r,baseline);}
 }
+static void level_four_quotas(void) {
+ const char *names[]={"pixel_pair","pixel_cap","quota_text64","pixel_sum_overflow"};
+ size_t baseline=tinyrt_runtime_memory_used();
+ for (uint32_t level=3;level<=4;level++) {
+  policy.min_api_level=level;
+  for (unsigned i=0;i<sizeof(names)/sizeof(*names);i++) {
+   tinyrt_runtime_t *r=create(names[i]);if (!r) continue;
+   CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK);
+   tinyrt_status_t status=tinyrt_runtime_render(r,&frame);
+   if (level==3 || i==3) CHECK(status==TINYRT_VERIFY_FAILED && frame.count==0);
+   else {
+    CHECK(status==TINYRT_OK);
+    if (i==0) {
+     CHECK(frame.count==3 && frame.pixel_bytes==16);
+     CHECK(frame.commands[1].pixel_offset==0 && frame.commands[2].pixel_offset==8);
+     CHECK(frame.pixels[0]==0 && frame.pixels[8]==0x99);
+    }
+    if (i==1) CHECK(frame.count==129);
+    if (i==2) CHECK(strlen(frame.commands[1].text)==64);
+   }
+   close_guest(r,baseline);
+  }
+ }
+ policy.min_api_level=0;
+}
+
 static void skipping(void) {
  size_t baseline=tinyrt_runtime_memory_used();
  const char*good[]={"skip_valid","pixel_then_skip"};
@@ -123,7 +149,7 @@ static void clocks(void) {
  r=create("pixel_valid");if(r){CHECK(tinyrt_runtime_init(r,466,466)==TINYRT_OK&&tinyrt_runtime_clock_interval_ms(r)==100);close_guest(r,baseline);}
 }
 int main(void) {
- CHECK(tinyrt_runtime_system_init()==TINYRT_OK);pixels();skipping();stages_and_permissions();clocks();scaling_resources();
+ CHECK(tinyrt_runtime_system_init()==TINYRT_OK);pixels();level_four_quotas();skipping();stages_and_permissions();clocks();scaling_resources();
  size_t peak=tinyrt_runtime_memory_peak();CHECK(peak>122880);
  tinyrt_runtime_system_shutdown();CHECK(tinyrt_runtime_memory_used()==0&&tinyrt_runtime_memory_peak()==peak);
  CHECK(tinyrt_runtime_system_init()==TINYRT_OK&&tinyrt_runtime_memory_peak()<peak);

@@ -7,6 +7,7 @@
 unsigned runtime_destroy_count;
 int runtime_fail_event;
 int runtime_stop_write;
+uint32_t runtime_test_key;
 int runtime_skip_write;
 int runtime_skip_frame;
 int metadata_swap;
@@ -55,14 +56,14 @@ tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r,int32_t kind,int32_t x,
  if(runtime_haptic)return x ? r->host.haptic_pulse(r->host.ctx,(uint32_t)x,(uint32_t)y) : r->host.haptic_stop(r->host.ctx);
  if(runtime_audio)return r->host.audio_play(r->host.ctx,(uint32_t)x,(uint32_t)y,(uint32_t)arg);
  if(runtime_skip_write)return TINYRT_OK;
- int32_t old=r->host.kv_get(r->host.ctx,0,0);
- tinyrt_status_t s=r->host.kv_set(r->host.ctx,0,old+1);
+ int32_t old=r->host.kv_get(r->host.ctx,runtime_test_key,0);
+ tinyrt_status_t s=r->host.kv_set(r->host.ctx,runtime_test_key,old+1);
  return runtime_fail_event?TINYRT_VERIFY_FAILED:s;
 }
 tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r,tinyrt_frame_t *out) {
  if(runtime_skip_frame){out->count=0;return TINYRT_OK;}
  out->count=1;out->pixel_bytes=0;memset(&out->commands[0],0,sizeof(out->commands[0]));out->commands[0].kind=TINYRT_DRAW_CLEAR;
- out->commands[0].rgb=(uint32_t)r->host.kv_get(r->host.ctx,0,0);return TINYRT_OK;
+ out->commands[0].rgb=(uint32_t)r->host.kv_get(r->host.ctx,runtime_test_key,0);return TINYRT_OK;
 }
 uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r) {return r?17:100;}
 uint32_t tinyrt_runtime_input_events(const tinyrt_runtime_t *r) {(void)r;return 0;}

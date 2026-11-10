@@ -63,10 +63,11 @@ static bool parse_header(const uint8_t h[256], uint32_t length, tinyrt_package_m
     m->policy.abi_version=get32(h+36); m->policy.permissions=get32(h+40);
     m->policy.max_memory_pages=get32(h+44); m->policy.instruction_budget=get32(h+48);
     m->signing_key_id=get32(h+52);
+    tinyrt_limits_t limits=tinyrt_limits_for_level(m->policy.min_api_level);
     if(!m->app.id.version || m->policy.abi_version!=TINYRT_PACKAGE_ABI_VERSION ||
        (m->policy.permissions&~TINYRT_PERMISSION_ALL) || !m->policy.max_memory_pages ||
-       m->policy.max_memory_pages>16 || !m->policy.instruction_budget ||
-       m->policy.instruction_budget>100000 || !valid_id(h+56) || !valid_title(h+88)) return false;
+       m->policy.max_memory_pages>limits.memory_pages || !m->policy.instruction_budget ||
+       m->policy.instruction_budget>limits.instructions || !valid_id(h+56) || !valid_title(h+88)) return false;
     memcpy(m->app.id.app_id,h+56,32); memcpy(m->title,h+88,64);
     m->app.package_size=length;
     return true;
@@ -171,6 +172,7 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     tinyrt_package_metadata_t m={0};
     if(!parse_header(header,length,&m)) return TINYRT_VERIFY_FAILED;
     if(m.policy.min_api_level>TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
+    if(m.policy.min_api_level<4 && (m.policy.permissions&TINYRT_PERMISSION_ACCESSORY)) return TINYRT_VERIFY_FAILED;
     if(m.policy.min_api_level<3 && (m.policy.permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) return TINYRT_VERIFY_FAILED;
     r=parse_sections(io,off,length,get32(header+20),&m);
     if(r!=TINYRT_OK) return r;

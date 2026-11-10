@@ -110,7 +110,7 @@ struct tinyrt_runtime {
     uint64_t gfx_work;
     bool gfx_open,gfx_rejected,fb_presented;
     int32_t width, height;
-    uint32_t clock_interval_ms, callback, input_events, audio_requests;
+    uint32_t clock_interval_ms, callback, input_events, audio_requests, image_count;
     bool ready, failed, stopped, skipped, aot;
     uint32_t hardware_events;
     uint32_t log_since_ms, log_count, log_dropped;
@@ -158,7 +158,7 @@ static tinyrt_draw_command_t *command(tinyrt_runtime_t *r, uint32_t kind)
     if (!permission(r, TINYRT_PERMISSION_DRAW)) return NULL;
     if (!r->frame) { fail(r, "draw outside render"); return NULL; }
     if (r->skipped) { fail(r, "draw after skip"); return NULL; }
-    if (r->frame->count >= TINYRT_FRAME_MAX_COMMANDS) {
+    if (r->frame->count >= tinyrt_limits_for_level(r->policy.min_api_level).commands) {
         fail(r, "frame command limit exceeded"); return NULL;
     }
     if (r->frame->count == 0 && kind != TINYRT_DRAW_CLEAR) {
@@ -192,7 +192,7 @@ static int32_t draw_rect(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, int
 static int32_t draw_text(wasm_exec_env_t e, int32_t x, int32_t y, uint32_t ptr, uint32_t len, uint32_t rgb)
 {
     tinyrt_runtime_t *r = context(e);
-    if (x < 0 || y < 0 || x >= r->width || y >= r->height || !len || len > TINYRT_TEXT_MAX_BYTES)
+    if (x < 0 || y < 0 || x >= r->width || y >= r->height || !len || len > tinyrt_limits_for_level(r->policy.min_api_level).text_bytes)
         return fail(r, "text bounds or length invalid");
     if (!wasm_runtime_validate_app_addr(r->instance, ptr, len)) return fail(r, "text memory out of bounds");
     const uint8_t *p = wasm_runtime_addr_app_to_native(r->instance, ptr);
@@ -237,7 +237,7 @@ static int32_t draw_text_box(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w,
                             uint32_t ptr, uint32_t len, uint32_t rgb, int32_t font, int32_t align)
 {
     tinyrt_runtime_t *r = context(e);
-    if (!rectangle(r,x,y,w,h) || !len || len > TINYRT_TEXT_MAX_BYTES
+    if (!rectangle(r,x,y,w,h) || !len || len > tinyrt_limits_for_level(r->policy.min_api_level).text_bytes
         || (font != 18 && font != 24 && font != 36 && font != 48) || align < 0 || align > 2)
         return fail(r, "text box bounds or style invalid");
     if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"text memory out of bounds");
@@ -247,6 +247,25 @@ static int32_t draw_text_box(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w,
     if (!c) return -1;
     c->x=x; c->y=y; c->w=w; c->h=h; c->font_px=font; c->align=align; c->rgb=rgb & 0xffffff;
     memcpy(c->text,p,len);
+    return 0;
+}
+static int32_t image_command(tinyrt_runtime_t *r,uint32_t kind,int32_t x,int32_t y,int32_t w,int32_t h,
+                             int32_t sw,int32_t sh,uint32_t ptr,uint32_t len)
+{
+    if (r->image_count>=tinyrt_limits_for_level(r->policy.min_api_level).images)
+        return fail(r,"image count limit exceeded");
+    if (len>TINYRT_FRAME_MAX_PIXEL_BYTES || (r->image_count && r->frame->pixel_bytes>TINYRT_FRAME_MAX_PIXEL_BYTES-len))
+        return fail(r,"frame pixel byte limit exceeded");
+    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
+    const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if (!p) return fail(r,"pixel memory unavailable");
+    tinyrt_draw_command_t *c=command(r,kind);
+    if (!c) return -1;
+    c->x=x;c->y=y;c->w=w;c->h=h;c->source_w=sw;c->source_h=sh;
+    c->pixel_offset=r->frame->pixel_bytes;
+    memcpy(r->frame->pixels+c->pixel_offset,p,len);
+    r->frame->pixel_bytes+=len;
+    r->image_count++;
     return 0;
 }
 static int32_t draw_rgb565(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, int32_t h,
@@ -259,15 +278,7 @@ static int32_t draw_rgb565(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w, i
      * patterns must never wrap into a small copy length. */
     if (!rectangle(r,x,y,w,h) || w>256 || h>240 || len!=(uint32_t)w*(uint32_t)h*2u)
         return fail(r,"pixel bounds or length invalid");
-    if (r->frame->count && r->frame->pixel_bytes) return fail(r,"one image per frame");
-    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
-    const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
-    if (!p) return fail(r,"pixel memory unavailable");
-    tinyrt_draw_command_t *c=command(r,TINYRT_DRAW_RGB565);
-    if (!c) return -1;
-    c->x=x;c->y=y;c->w=w;c->h=h;
-    memcpy(r->frame->pixels,p,len);r->frame->pixel_bytes=len;
-    return 0;
+    return image_command(r,TINYRT_DRAW_RGB565,x,y,w,h,0,0,ptr,len);
 }
 static int32_t draw_skip(wasm_exec_env_t e)
 {
@@ -284,15 +295,7 @@ static int32_t draw_rgb565_scaled(wasm_exec_env_t e,int32_t x,int32_t y,int32_t 
     if (!r->frame || r->skipped) return fail(r,"pixels outside drawing render");
     if (!rectangle(r,x,y,w,h) || sw<1 || sw>256 || sh<1 || sh>240 ||
         len!=(uint32_t)sw*(uint32_t)sh*2u) return fail(r,"scaled pixel bounds or length invalid");
-    if (r->frame->count && r->frame->pixel_bytes) return fail(r,"one image per frame");
-    if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"pixel memory out of bounds");
-    const uint8_t *p=wasm_runtime_addr_app_to_native(r->instance,ptr);
-    if (!p) return fail(r,"pixel memory missing");
-    tinyrt_draw_command_t *c=command(r,TINYRT_DRAW_RGB565_SCALED);
-    if (!c) return -1;
-    c->x=x;c->y=y;c->w=w;c->h=h;c->source_w=sw;c->source_h=sh;
-    memcpy(r->frame->pixels,p,len);r->frame->pixel_bytes=len;
-    return 0;
+    return image_command(r,TINYRT_DRAW_RGB565_SCALED,x,y,w,h,sw,sh,ptr,len);
 }
 static int32_t asset_read(wasm_exec_env_t e,uint32_t offset,uint32_t ptr,uint32_t len)
 {
@@ -351,7 +354,7 @@ static int32_t kv_get(wasm_exec_env_t e, uint32_t key, int32_t fallback)
 {
     tinyrt_runtime_t *r = context(e);
     if (!permission(r, TINYRT_PERMISSION_STORAGE)) return -1;
-    if (key >= 16 || !r->host.kv_get) return fail(r, "key or storage callback invalid");
+    if (key >= (r->policy.min_api_level>=4?TINYRT_KV_KEYS_MAX:TINYRT_KV_KEYS_BASE) || !r->host.kv_get) return fail(r, "key or storage callback invalid");
     return r->host.kv_get(r->host.ctx, key, fallback);
 }
 static int32_t input_events(wasm_exec_env_t e, uint32_t mask)
@@ -368,7 +371,7 @@ static int32_t kv_set(wasm_exec_env_t e, uint32_t key, int32_t value)
 {
     tinyrt_runtime_t *r = context(e);
     if (!permission(r, TINYRT_PERMISSION_STORAGE)) return -1;
-    if (key >= 16 || !r->host.kv_set) return fail(r, "key or storage callback invalid");
+    if (key >= (r->policy.min_api_level>=4?TINYRT_KV_KEYS_MAX:TINYRT_KV_KEYS_BASE) || !r->host.kv_set) return fail(r, "key or storage callback invalid");
     if (r->host.kv_set(r->host.ctx, key, value) != TINYRT_OK) return fail(r, "storage callback failed");
     return 0;
 }
@@ -381,6 +384,90 @@ static uint32_t now_ms(wasm_exec_env_t e)
 }
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
+/* Validate Guest memory before converting offsets into native pointers. */
+static void *guest_span(tinyrt_runtime_t *r,uint32_t ptr,uint32_t size)
+{
+    if(!wasm_runtime_validate_app_addr(r->instance,ptr,size)) {
+        fail(r,"guest buffer outside linear memory");
+        return NULL;
+    }
+    return wasm_runtime_addr_app_to_native(r->instance,ptr);
+}
+static int32_t audio_queue_free(wasm_exec_env_t e)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_AUDIO)) return -1;
+    return r->host.device && r->host.device->audio_queue_free?r->host.device->audio_queue_free():-2;
+}
+static int32_t audio_write(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_AUDIO)) return -1;
+    if(r->callback>1 || !length || (length&1u)) return fail(r,"invalid PCM callback or length");
+    uint32_t chunk=length>8000?8000:length;
+    const void *pcm=guest_span(r,ptr,chunk);
+    if(!pcm) return -1;
+    return r->host.device && r->host.device->audio_write?r->host.device->audio_write(pcm,chunk):-2;
+}
+static int32_t audio_tone(wasm_exec_env_t e,uint32_t freq,uint32_t ms)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_AUDIO)) return -1;
+    if(r->callback>1 || freq<20 || freq>=8000 || !ms || ms>1000) return fail(r,"invalid tone");
+    return r->host.device && r->host.device->audio_tone?r->host.device->audio_tone(freq,ms):-2;
+}
+static int32_t haptic_pattern(wasm_exec_env_t e,uint32_t ptr,uint32_t count)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_HAPTIC)) return -1;
+    uint16_t steps[32];
+    if(r->callback>1 || !count || count>32) return fail(r,"invalid haptic pattern");
+    const void *src=guest_span(r,ptr,count*sizeof(steps[0]));
+    if(!src) return -1;
+    memcpy(steps,src,count*sizeof(steps[0]));
+    uint32_t total=0;
+    for(uint32_t i=0;i<count;i++) {
+        total+=steps[i];
+        if(!steps[i] || steps[i]>2000 || total>10000) return fail(r,"invalid pattern duration");
+    }
+    return r->host.device && r->host.device->haptic_pattern?r->host.device->haptic_pattern(steps,count):-2;
+}
+static int32_t acc_send(wasm_exec_env_t e,uint32_t type,uint32_t ptr,uint32_t size)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_ACCESSORY)) return -1;
+    if(r->callback>1 || type<0x70 || type>0x7f || size>58) return fail(r,"invalid accessory frame");
+    const void *src=size?guest_span(r,ptr,size):NULL;
+    if(size && !src) return -1;
+    return r->host.device && r->host.device->acc_send?r->host.device->acc_send(type,src,size):-2;
+}
+static int32_t acc_read(wasm_exec_env_t e,uint32_t ptr,uint32_t capacity)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_ACCESSORY)) return -1;
+    uint32_t size=capacity>58?58:capacity;
+    void *dst=size?guest_span(r,ptr,size):NULL;
+    if(size && !dst) return -1;
+    return r->host.device && r->host.device->acc_read?r->host.device->acc_read(dst,size):-2;
+}
+static int32_t blob_read(wasm_exec_env_t e,uint32_t ptr,uint32_t capacity)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_STORAGE)) return -1;
+    if(capacity>2048) return -2;
+    void *dst=capacity?guest_span(r,ptr,capacity):NULL;
+    if(capacity && !dst) return -1;
+    return r->host.blob_read?r->host.blob_read(r->host.ctx,dst,capacity):-2;
+}
+static int32_t blob_write(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_STORAGE)) return -1;
+    if(length>2048) return -2;
+    const void *src=length?guest_span(r,ptr,length):NULL;
+    if(length && !src) return -1;
+    return r->host.blob_write?r->host.blob_write(r->host.ctx,src,length):-2;
+}
 static int32_t device_read(tinyrt_runtime_t *r,uint32_t ptr,uint32_t length,
                            uint32_t count,int32_t (*read_values)(int32_t *))
 {
@@ -476,20 +563,31 @@ static int32_t sys_info(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
     const uint32_t w=(uint32_t)r->width,h=(uint32_t)r->height;
     /* A centered square inscribed in the circular viewport. */
     const uint32_t side=(uint32_t)((uint64_t)(w<h?w:h)*7071u/10000u);
-    const uint32_t fields[]={TINYRT_HOST_API_LEVEL,w,h,(w-side)/2,(h-side)/2,side,side,16,100000};
-    if(length<sizeof(fields)) return -2;
-    if(!wasm_runtime_validate_app_addr(r->instance,ptr,sizeof(fields))) return fail(r,"sys_info out of bounds");
+    const tinyrt_limits_t limits=tinyrt_limits_for_level(r->policy.min_api_level);
+    const uint32_t fields[]={TINYRT_HOST_API_LEVEL,w,h,(w-side)/2,(h-side)/2,side,side,
+        limits.memory_pages,limits.instructions,limits.text_bytes,limits.images,limits.commands,limits.kv_keys};
+    const uint32_t legacy_size=9u*sizeof(uint32_t);
+    if(length<legacy_size) return -2;
+    uint32_t size=length>=sizeof(fields) ? sizeof(fields) : legacy_size;
+    if(!wasm_runtime_validate_app_addr(r->instance,ptr,size)) return fail(r,"sys_info out of bounds");
     void *dst=wasm_runtime_addr_app_to_native(r->instance,ptr);
     if(!dst) return fail(r,"sys_info out of bounds");
-    memcpy(dst,fields,sizeof(fields));
+    memcpy(dst,fields,size);
     return 0;
 }
 static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 : 0; }
 #include "tinyrt_gfx_imports.inc"
 static NativeSymbol natives[] = {
+    { "acc_read", (void *)acc_read, "(ii)i", NULL },
+    { "acc_send", (void *)acc_send, "(iii)i", NULL },
     { "asset_read", (void *)asset_read, "(iii)i", NULL },
     { "audio_play", (void *)audio_play, "(iii)i", NULL },
+    { "audio_queue_free", (void *)audio_queue_free, "()i", NULL },
+    { "audio_tone", (void *)audio_tone, "(ii)i", NULL },
+    { "audio_write", (void *)audio_write, "(ii)i", NULL },
     { "battery_info", (void *)battery_info, "(ii)i", NULL },
+    { "blob_read", (void *)blob_read, "(ii)i", NULL },
+    { "blob_write", (void *)blob_write, "(ii)i", NULL },
     { "clock_interval", (void *)clock_interval, "(i)i", NULL },
     { "debug_log", (void *)debug_log, "(ii)i", NULL },
     { "display_brightness", (void *)display_brightness, "(i)i", NULL },
@@ -513,6 +611,7 @@ static NativeSymbol natives[] = {
     { "gfx_tex_free", (void *)gfx_tex_free, "(i)i", NULL },
     { "gfx_tex_update_rows", (void *)gfx_tex_update_rows, "(iiiii)i", NULL },
     { "gfx_tex_upload", (void *)gfx_tex_upload, "(iiiiiii)i", NULL },
+    { "haptic_pattern", (void *)haptic_pattern, "(ii)i", NULL },
     { "haptic_pulse", (void *)haptic_pulse, "(ii)i", NULL },
     { "haptic_stop", (void *)haptic_stop, "()i", NULL },
     { "imu_config", (void *)imu_config, "(ii)i", NULL },
@@ -528,9 +627,9 @@ static NativeSymbol natives[] = {
     { "time_local", (void *)time_local, "(ii)i", NULL },
     { "time_subscribe", (void *)time_subscribe, "(i)i", NULL }
 };
-static const unsigned arity[] = { 3, 3, 2, 1, 2, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 2, 2, 1, 2, 2, 0, 0, 0, 1, 2, 2, 1 };
-static const uint32_t required_permission[] = { 0, 16, 256, 8, 0, 256, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 128, 128, 2, 4, 4, 8, 0, 0, 256, 0, 8, 8 };
-static const unsigned since_level[] = { 1, 1, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1, 1, 1, 2, 1, 3, 2, 3, 3 };
+static const unsigned arity[] = { 2, 3, 3, 3, 0, 2, 2, 2, 2, 2, 1, 2, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 2, 0, 2, 2, 1, 2, 2, 0, 0, 0, 1, 2, 2, 1 };
+static const uint32_t required_permission[] = { 512, 512, 0, 16, 16, 16, 16, 256, 4, 4, 8, 0, 256, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 32, 128, 128, 2, 4, 4, 8, 0, 0, 256, 0, 8, 8 };
+static const unsigned since_level[] = { 4, 4, 1, 1, 4, 4, 4, 3, 4, 4, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 3, 3, 1, 1, 1, 1, 2, 1, 3, 2, 3, 3 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -582,9 +681,9 @@ static bool u32(reader_t *r, uint32_t *out)
 }
 static bool policy_valid(const tinyrt_package_policy_t *p)
 {
-    return p && (p->min_api_level>=3 || !(p->permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
-        && p->max_memory_pages >= 1 && p->max_memory_pages <= 16
-        && p->instruction_budget >= 1 && p->instruction_budget <= 100000;
+    return p && (p->min_api_level>=4 || !(p->permissions&TINYRT_PERMISSION_ACCESSORY)) && (p->min_api_level>=3 || !(p->permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
+        && p->max_memory_pages >= 1 && p->max_memory_pages <= tinyrt_limits_for_level(p->min_api_level).memory_pages
+        && p->instruction_budget >= 1 && p->instruction_budget <= tinyrt_limits_for_level(p->min_api_level).instructions;
 }
 static bool preflight(const uint8_t *bytes, uint32_t size, const tinyrt_package_policy_t *p)
 {
@@ -940,14 +1039,15 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || kind < 1 || kind==9 || kind > 12) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind==9 || kind > 13) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     if(kind==7 && (r->hardware_events&(1u<<7))) {
         if(!(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
     } else if (kind!=2 && kind<=8 && !(r->policy.permissions&TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
     if ((kind==10 || kind==11) && !(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
     if (kind==12 && !(r->policy.permissions&TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
-    if (kind >= 3 && !((r->input_events|r->hardware_events) & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
+    if(kind==13 && !(r->policy.permissions&TINYRT_PERMISSION_ACCESSORY)) return TINYRT_INVALID_ARGUMENT;
+    if (kind >= 3 && kind!=13 && !((r->input_events|r->hardware_events) & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
     if ((kind == 1 || kind == 3 || kind == 4) && (x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 6 && (x != 1 || (y != 0 && y != 1) || arg != 0)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 7 && (x < -16000 || x > 16000 || y < -16000 || y > 16000 || arg < -16000 || arg > 16000)) return TINYRT_INVALID_ARGUMENT;
@@ -979,6 +1079,7 @@ tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
     if (r->failed) return TINYRT_VERIFY_FAILED;
     r->skipped = false;
     r->gfx_open=false;r->gfx_rejected=false;
+    r->image_count=0;
     r->frame = out;
     uint32_t argv[1] = { 0 };
     tinyrt_status_t status = invoke(r, 2, 0, argv);

@@ -5,8 +5,6 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-#define TINYRT_FRAME_MAX_COMMANDS 128u
-#define TINYRT_TEXT_MAX_BYTES 63u
 #define TINYRT_FRAME_MAX_PIXEL_BYTES (256u * 240u * 2u)
 #define TINYRT_AUDIO_MAX_BYTES 32000u
 #define TINYRT_AUDIO_SAMPLE_RATE 16000u
@@ -37,7 +35,8 @@ typedef struct {
     uint32_t rgb;
     int32_t radius, thickness, start_angle, end_angle, font_px, align;
     int32_t source_w, source_h;
-    char text[64];
+    uint32_t pixel_offset;
+    char text[TINYRT_TEXT_MAX_BYTES+1u];
 } tinyrt_draw_command_t;
 typedef struct tinyrt_frame {
     uint32_t count;
@@ -56,6 +55,12 @@ typedef struct {
     int32_t (*battery_info)(int32_t values[4]);
     int32_t (*display_brightness)(int32_t percent);
     int32_t (*screen_keep_on)(int32_t on);
+    int32_t (*audio_write)(const void *pcm,uint32_t length);
+    int32_t (*audio_queue_free)(void);
+    int32_t (*audio_tone)(uint32_t hz,uint32_t ms);
+    int32_t (*haptic_pattern)(const uint16_t *steps,uint32_t count);
+    int32_t (*acc_send)(uint32_t type,const void *buf,uint32_t length);
+    int32_t (*acc_read)(void *buf,uint32_t capacity);
 } tinyrt_device_api_t;
 
 typedef struct {
@@ -75,6 +80,8 @@ typedef struct {
     void (*debug_log)(void *,const char *text,uint32_t length);
     uint32_t (*random_u32)(void *);
     const tinyrt_device_api_t *device;
+    int32_t (*blob_read)(void *ctx,void *dst,uint32_t capacity);
+    int32_t (*blob_write)(void *ctx,const void *src,uint32_t length);
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

@@ -1,8 +1,35 @@
 {
   "abi_version": 1,
-  "api_level": 3,
+  "api_level": 4,
   "module": "tinyrt",
+  "quotas": {
+    "level_1_to_3": {"commands": 128, "text_bytes": 63, "images": 1, "pixel_bytes_total": 122880, "memory_pages": 16, "instruction_budget": 100000, "kv_keys": 16},
+    "level_4": {"commands": 144, "text_bytes": 95, "images": 2, "pixel_bytes_total": 122880, "memory_pages": 20, "instruction_budget": 125000, "kv_keys": 24}
+  },
   "imports": [
+    {
+      "name": "acc_read",
+      "signature": "(ii)i",
+      "permission": 512,
+      "since_level": 4,
+      "stages": [
+        "event"
+      ],
+      "limits": "ACC_DATA (kind 13), ≤ 58 bytes, 一次读取 / one successful read per event",
+      "errors": "实际字节数 / bytes read；−1 缓冲区过小，可在本次回调重试 / short buffer, retry in same callback；−2 无消息 / no message"
+    },
+    {
+      "name": "acc_send",
+      "signature": "(iii)i",
+      "permission": 512,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "type 0x70..0x7f, 0..58 bytes, 间隔 / spacing ≥ 20 ms",
+      "errors": "0 成功 / sent；1 限速 / rate limited；−1 发送失败 / I/O failure；−2 未连接 / disconnected；非法参数触发 trap / invalid arguments trap"
+    },
     {
       "name": "asset_read",
       "signature": "(iii)i",
@@ -14,6 +41,44 @@
       "signature": "(iii)i",
       "permission": 16,
       "since_level": 1
+    },
+    {
+      "name": "audio_queue_free",
+      "signature": "()i",
+      "permission": 16,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "PCM16 LE mono, 16 kHz, 8000 bytes / 250 ms",
+      "errors": "空闲字节，0 队列满 / free bytes, 0 when full；−2 不可用 / unavailable"
+    },
+    {
+      "name": "audio_tone",
+      "signature": "(ii)i",
+      "permission": 16,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "20..7999 Hz, 1..1000 ms",
+      "errors": "0 成功 / success；−2 忙或不可用 / busy or unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
+      "name": "audio_write",
+      "signature": "(ii)i",
+      "permission": 16,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "PCM16 LE mono, 16 kHz, 正偶数字节，每次最多接收 8000 / positive even length, accepts at most 8000 bytes per call",
+      "errors": "已接收字节数，可部分写入 / bytes accepted, may be partial；−2 忙或不可用 / busy or unavailable；非法调用触发 trap / invalid use traps"
     },
     {
       "name": "battery_info",
@@ -28,6 +93,34 @@
       ],
       "limits": "tinyrt_battery_t, 4 × i32 LE (16 bytes)",
       "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
+      "name": "blob_read",
+      "signature": "(ii)i",
+      "permission": 4,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "一个应用一块 / one blob per app, 0..2048 bytes",
+      "errors": "字节数，0 空 / bytes read, 0 if empty；−2 缓冲区过小、不支持或超限，无复制 / short buffer, unavailable or over limit, no copy；−1 存储失败 / storage failure"
+    },
+    {
+      "name": "blob_write",
+      "signature": "(ii)i",
+      "permission": 4,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "0..2048 bytes, 0 清空 / empty clears",
+      "errors": "写入字节数 / bytes written；−2 不可用或超限 / unavailable or over limit；−1 存储失败 / storage failure"
     },
     {
       "name": "clock_interval",
@@ -184,6 +277,18 @@
       "since_level": 1
     },
     {
+      "name": "haptic_pattern",
+      "signature": "(ii)i",
+      "permission": 32,
+      "since_level": 4,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "1..32 个交替开关时段 / alternating on-off steps, 1..2000 ms each, total ≤ 10000 ms, 60%",
+      "errors": "0 成功 / success；−2 忙或不可用 / busy or unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
       "name": "haptic_pulse",
       "signature": "(ii)i",
       "permission": 32,
@@ -289,7 +394,7 @@
         "render",
         "stop"
       ],
-      "limits": "9 × u32 LE (36 bytes)",
+      "limits": "36 bytes (baseline); 52 bytes also reports text_bytes_max, image_count_max, commands_max, kv_keys_max for this package level",
       "errors": "0 成功 / success；−2 缓冲区过小 / short buffer；越界触发 trap / invalid address traps"
     },
     {
@@ -381,6 +486,10 @@
     "TINYRT_EV_MINUTE": {
       "value": 12,
       "since_level": 3
+    },
+    "TINYRT_EV_ACC_DATA": {
+      "value": 13,
+      "since_level": 4
     }
   },
   "storage": {
@@ -578,6 +687,10 @@
     "SYSTEM": {
       "value": 256,
       "since_level": 3
+    },
+    "ACCESSORY": {
+      "value": 512,
+      "since_level": 4
     }
   }
 }

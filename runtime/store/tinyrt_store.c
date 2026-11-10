@@ -59,7 +59,7 @@ tinyrt_status_t tinyrt_store_recheck(tinyrt_store_t *s,const tinyrt_package_id_t
         tinyrt_status_t r=s->verify(s->verify_ctx,&s->io,record->offset,record->app.package_size,&actual);
         if(r==TINYRT_OK && (!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&record->app)))
             r=TINYRT_VERIFY_FAILED;
-        if(r==TINYRT_CORRUPT) r=TINYRT_VERIFY_FAILED;
+        if(r==TINYRT_CORRUPT || r==TINYRT_ERR_API_LEVEL) r=TINYRT_VERIFY_FAILED;
         if((r==TINYRT_OK||r==TINYRT_VERIFY_FAILED) && record->quarantined!=(r!=TINYRT_OK)) {
             if(s->revision==UINT64_MAX) return TINYRT_CONFLICT;
             record->quarantined=r!=TINYRT_OK;++s->revision;

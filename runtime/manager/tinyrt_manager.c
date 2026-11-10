@@ -21,15 +21,18 @@ struct tinyrt_manager {
     tinyrt_manager_audio_t audio;
     tinyrt_manager_haptic_t haptic;
     uint8_t *audio_buffer;
+    uint8_t *blob;
+    uint32_t blob_len;
+    bool blob_dirty;
     tinyrt_crash_t crash;
     tinyrt_app_info_t running;
     uint32_t resource_offset,resource_size;
     uint8_t *resource_cache;
     uint32_t resource_cache_size;
     uint32_t mask;
-    int32_t values[16];
+    int32_t values[TINYRT_KV_KEYS_MAX];
     uint32_t durable_mask, last_save_ms;
-    int32_t durable_values[16];
+    int32_t durable_values[TINYRT_KV_KEYS_MAX];
     bool save_attempted;
     tinyrt_package_metadata_t catalog[TINYRT_STORE_MAX_APPS];
     tinyrt_app_info_t scratch[TINYRT_STORE_MAX_APPS]; /* Single-owner heap workspace. */
@@ -65,7 +68,8 @@ tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *io, const tinyrt_pa
     if (!out)
         return TINYRT_INVALID_ARGUMENT;
     *out = NULL;
-    if (!io || !v || !storage || !storage->load || !storage->save || !storage->clear || !storage->now_ms)
+    if (!io || !v || !storage || !storage->load || !storage->save || !storage->clear || !storage->now_ms ||
+        (storage->kv_keys && storage->kv_keys != TINYRT_KV_KEYS_BASE && storage->kv_keys != TINYRT_KV_KEYS_MAX))
         return TINYRT_INVALID_ARGUMENT;
     tinyrt_manager_t *m = calloc(1, sizeof(*m));
     if (!m)
@@ -74,6 +78,7 @@ tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *io, const tinyrt_pa
     m->require_aot_on_install=v->require_aot_on_install;
     m->verifier.require_aot_on_install=false;
     m->storage = *storage;
+    if (!m->storage.kv_keys) m->storage.kv_keys = TINYRT_KV_KEYS_BASE;
     tinyrt_status_t r = tinyrt_store_open(io, tinyrt_package_verify, &m->verifier, &m->store);
     if (r != TINYRT_OK) {
         free(m);
@@ -87,6 +92,7 @@ static void destroy_runtime(tinyrt_manager_t *m) {
         return;
     if (m->runtime && m->audio.stop) m->audio.stop(m->audio.ctx);
     if (m->runtime && m->haptic.stop) (void)m->haptic.stop(m->haptic.ctx);
+    free(m->blob);m->blob=NULL;m->blob_len=0;m->blob_dirty=false;
     free(m->audio_buffer);m->audio_buffer=NULL;
     tinyrt_runtime_destroy(m->runtime);
     m->runtime = NULL;
@@ -124,7 +130,7 @@ tinyrt_status_t tinyrt_manager_set_haptic(tinyrt_manager_t *m,const tinyrt_manag
     return TINYRT_OK;
 }
 static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
-    if (m->mask == m->durable_mask && !memcmp(m->values, m->durable_values, sizeof(m->values)))
+    if (!m->blob_dirty && m->mask == m->durable_mask && !memcmp(m->values, m->durable_values, sizeof(m->values)))
         return TINYRT_OK;
     uint32_t now = m->storage.now_ms(m->storage.ctx);
     if (!force && m->save_attempted && (uint32_t)(now - m->last_save_ms) < TINYRT_MANAGER_SAVE_INTERVAL_MS)
@@ -133,7 +139,10 @@ static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
      * failure cannot turn ordinary callbacks into an unbounded retry loop. */
     m->save_attempted = true;
     m->last_save_ms = now;
-    tinyrt_status_t r = m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    tinyrt_status_t r = m->blob_dirty ?
+        m->storage.save_state(m->running.id.app_id,m->mask,m->values,m->blob,m->blob_len) :
+        m->storage.save(m->storage.ctx, m->running.id.app_id, m->mask, m->values);
+    if(r==TINYRT_OK) m->blob_dirty=false;
     if (r == TINYRT_OK) {
         m->durable_mask = m->mask;
         memcpy(m->durable_values, m->values, sizeof(m->values));
@@ -386,15 +395,44 @@ tinyrt_status_t tinyrt_manager_uninstall(tinyrt_manager_t *m, const tinyrt_packa
 }
 static int32_t host_get(void *ctx, uint32_t key, int32_t fallback) {
     tinyrt_manager_t *m = ctx;
-    return key < 16 && (m->mask & (1u << key)) ? m->values[key] : fallback;
+    return key < m->storage.kv_keys && (m->mask & (1u << key)) ? m->values[key] : fallback;
 }
 static tinyrt_status_t host_set(void *ctx, uint32_t key, int32_t value) {
     tinyrt_manager_t *m = ctx;
-    if (key >= 16)
+    if (key >= m->storage.kv_keys)
         return TINYRT_INVALID_ARGUMENT;
     m->mask |= 1u << key;
     m->values[key] = value;
     return TINYRT_OK;
+}
+static int32_t load_blob(tinyrt_manager_t *m) {
+    if(m->blob) return 0;
+    if(!m->storage.blob_read) return -2;
+    uint8_t *buffer=malloc(2048);
+    if(!buffer) return -2;
+    int32_t size=m->storage.blob_read(m->running.id.app_id,buffer,2048);
+    if(size<0 || size>2048) {free(buffer);return size<0?size:-1;}
+    m->blob=buffer;m->blob_len=(uint32_t)size;
+    return 0;
+}
+static int32_t host_blob_read(void *ctx,void *dst,uint32_t capacity) {
+    tinyrt_manager_t *m=ctx;
+    int32_t result=load_blob(m);
+    if(result<0) return result;
+    if(capacity<m->blob_len) return -2;
+    if(m->blob_len) memcpy(dst,m->blob,m->blob_len);
+    return (int32_t)m->blob_len;
+}
+static int32_t host_blob_write(void *ctx,const void *src,uint32_t size) {
+    tinyrt_manager_t *m=ctx;
+    if(!m->storage.save_state || size>2048) return -2;
+    int32_t result=load_blob(m);
+    if(result<0) return result;
+    if(size!=m->blob_len || (size && memcmp(m->blob,src,size))) {
+        if(size) memcpy(m->blob,src,size);
+        m->blob_len=size;m->blob_dirty=true;
+    }
+    return (int32_t)size;
 }
 static void host_log(void *ctx,const char *text,uint32_t length) {
     tinyrt_manager_t *m=ctx;
@@ -515,7 +553,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL,m->storage.device};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL,m->storage.device,host_blob_read,host_blob_write};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {

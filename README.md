@@ -1,5 +1,7 @@
 # TinyRT core
 
+Magie S31 开启 `CONFIG_TINYRT_REQUIRE_AOT`，安装和启动均要求兼容的 AOT。宿主兼容规则见[版本规范](specs/versioning.md)。
+
 TinyRT validates application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the
 portable runtime, contracts and core tests. SDK authoring tools/examples and

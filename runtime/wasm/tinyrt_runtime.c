@@ -415,6 +415,7 @@ static NativeSymbol natives[] = {
 };
 static const unsigned arity[] = { 3, 3, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 1, 2, 2, 0, 0 };
 static const uint32_t required_permission[] = { 0, 16, 8, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 2, 4, 4, 8, 0 };
+static const unsigned since_level[] = { 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -523,6 +524,7 @@ static bool module_policy(wasm_module_t module, const tinyrt_package_policy_t *p
         for (j = 0; j < sizeof(natives) / sizeof(*natives); j++)
             if (!strcmp(import.name, natives[j].symbol)) break;
         if (j == sizeof(natives) / sizeof(*natives) || !signature(import.u.func_type, arity[j])
+            || since_level[j] > (policy->min_api_level ? policy->min_api_level : 1u)
             || (required_permission[j] && !(policy->permissions & required_permission[j]))) return false;
     }
     unsigned found = 0;
@@ -651,6 +653,7 @@ tinyrt_status_t tinyrt_runtime_validate_wasm(void *ctx, const tinyrt_store_io_t 
     uint32_t offset, uint32_t size, const tinyrt_package_policy_t *policy)
 {
     (void)ctx;
+    if (policy && policy->min_api_level > TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     if (!initialized || !io || !io->read || !policy_valid(policy)) return TINYRT_INVALID_ARGUMENT;
     if (live_instances) return TINYRT_BUSY;
     if (size < 8 || size > TINYRT_STORE_MAX_PACKAGE_SIZE || offset > UINT32_MAX - size) return TINYRT_VERIFY_FAILED;
@@ -675,6 +678,7 @@ tinyrt_status_t tinyrt_runtime_validate_aot(void *ctx,const tinyrt_store_io_t *i
     uint32_t offset,uint32_t size,const tinyrt_package_policy_t *policy,const tinyrt_package_aot_metadata_t *meta)
 {
     const tinyrt_runtime_aot_config_t *config=ctx;
+    if (policy && policy->min_api_level > TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     if(!initialized || !io || !io->read || !policy_valid(policy) || !aot_config_valid(config))return TINYRT_INVALID_ARGUMENT;
     if(live_instances)return TINYRT_BUSY;
     if(size<64 || size>TINYRT_STORE_MAX_PACKAGE_SIZE || offset>UINT32_MAX-size
@@ -707,6 +711,7 @@ static tinyrt_status_t create_runtime(const void *bytes, uint32_t size,
 {
     if (!out) return TINYRT_INVALID_ARGUMENT;
     *out = NULL;
+    if (policy && policy->min_api_level > TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     if (!initialized || !bytes || !host || !policy_valid(policy)) return TINYRT_INVALID_ARGUMENT;
     if (live_instances) return TINYRT_BUSY;
     if(aot_config) {

@@ -1,6 +1,6 @@
 # 固定版本 AOT 工具链
 
-`source-lock.json` 固定 WAMR、Espressif LLVM 和补丁顺序。`build.py` 从这些源码构建 Windows 主机 `wamrc.exe`；不下载预编译 wamrc。运行库必须使用同一 WAMR commit 和对应运行库补丁。
+`source-lock-esp32s31.json` 固定 WAMR、Espressif LLVM 和补丁顺序。`build.py` 从这些源码构建 Windows 主机 `wamrc.exe`；不下载预编译 wamrc。运行库必须使用同一 WAMR commit 和对应运行库补丁。
 
 在 Visual Studio x64 Developer Command Prompt 中，将 CMake、Ninja、Git 和 Python 加入 PATH 后执行：
 
@@ -11,15 +11,15 @@ python esp32/tinyrt/tools/toolchain/build.py --work tmp/aot-toolchain --jobs 8
 
 构建中断后可加 `--resume`。脚本用临时 Git index 对比完整源码和固定补丁，不接受额外源码修改。`--proxy` 只为本次 Git 命令设置代理，不改全局配置。建议预留 5 GB 磁盘和 16 GB 内存；降低 `--jobs` 可减少内存峰值。
 
-输出包括 `wamrc-build/wamrc.exe`、`provenance.json`、构建日志和许可证。清单记录源码 commit、补丁 SHA-256、编译器 SHA-256、实际主机构建工具及编译参数。`target_options_sha256` 是参数数组经 UTF-8 紧凑 JSON 序列化后的 SHA-256，数组顺序参与计算。
+输出包括 `wamrc-build-riscv/wamrc.exe`、`provenance-riscv.json`、构建日志和许可证。清单记录源码 commit、补丁 SHA-256、编译器 SHA-256、实际主机构建工具及编译参数。`target_options_sha256` 是参数数组经 UTF-8 紧凑 JSON 序列化后的 SHA-256，数组顺序参与计算。
 
 ```bat
-python esp32/tinyrt/tools/toolchain/test_loop_poll.py --wamrc tmp/aot-toolchain/wamrc-build/wamrc.exe --output tmp/aot-verification --example path/to/nes-maze.wasm --objdump path/to/xtensa-esp32s3-elf-objdump.exe
-python esp32/tinyrt/tools/toolchain/make_probe.py --wamrc tmp/aot-toolchain/wamrc-build/wamrc.exe --output tmp/aot-board-probe
-python esp32/tinyrt/tools/toolchain/compile_fixtures.py --wamrc tmp/aot-toolchain/wamrc-build/wamrc.exe --input path/to/wasm-fixtures --output tmp/aot-board-fixtures
+python esp32/tinyrt/tools/toolchain/test_loop_poll.py --wamrc tmp/aot-toolchain/wamrc-build-riscv/wamrc.exe --output tmp/aot-verification --example path/to/nes-maze.wasm --objdump path/to/riscv32-esp-elf-objdump.exe
+python esp32/tinyrt/tools/toolchain/make_probe.py --wamrc tmp/aot-toolchain/wamrc-build-riscv/wamrc.exe --output tmp/aot-board-probe
+python esp32/tinyrt/tools/toolchain/compile_fixtures.py --wamrc tmp/aot-toolchain/wamrc-build-riscv/wamrc.exe --input path/to/wasm-fixtures --output tmp/aot-board-fixtures
 ```
 
-验证程序编译普通非共享内存和无内存模块，检查 `br`、`br_if`、`br_table` 和递归中的原子取消读取是否保留到优化后 IR。提供 `--objdump` 时，还检查实际 Xtensa 指令中的内存屏障、标志读取和条件退出。示例连续编译两次，要求 AOT 字节完全相同。这里验证的是 AOT 输出确定性，不承诺不同主机构建得到相同的 wamrc 二进制。
+验证程序编译普通非共享内存和无内存模块，检查 `br`、`br_if`、`br_table` 和递归中的原子取消读取是否保留到优化后 IR。提供 `--objdump` 时，还检查实际 RISC-V 指令中的内存屏障、标志读取和条件退出。示例连续编译两次，要求 AOT 字节完全相同。这里验证的是 AOT 输出确定性，不承诺不同主机构建得到相同的 wamrc 二进制。
 
 `compile_fixtures.py` 输出每个用例的来源/产物哈希清单，以及 8 字节对齐的纯 C 数组和名称查找表，便于板测直接装载。`test_build_source.py` 可使用已有官方源码检出作为本地 seed，验证首次普通/稀疏检出和已有脏源码拒绝逻辑；测试不创建 Git 提交。
 

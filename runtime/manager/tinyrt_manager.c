@@ -9,6 +9,7 @@
 struct tinyrt_manager {
     tinyrt_store_t *store;
     tinyrt_package_verifier_t verifier;
+    bool require_aot_on_install;
     tinyrt_manager_storage_t storage;
     tinyrt_install_t *install;
     uint32_t received;
@@ -69,6 +70,8 @@ tinyrt_status_t tinyrt_manager_open(const tinyrt_store_io_t *io, const tinyrt_pa
     if (!m)
         return TINYRT_NO_MEMORY;
     m->verifier = *v;
+    m->require_aot_on_install=v->require_aot_on_install;
+    m->verifier.require_aot_on_install=false;
     m->storage = *storage;
     tinyrt_status_t r = tinyrt_store_open(io, tinyrt_package_verify, &m->verifier, &m->store);
     if (r != TINYRT_OK) {
@@ -324,7 +327,9 @@ tinyrt_status_t tinyrt_manager_write(tinyrt_manager_t *m, const void *bytes, uin
 tinyrt_status_t tinyrt_manager_finish(tinyrt_manager_t *m) {
     if (!m || !m->install)
         return TINYRT_INVALID_ARGUMENT;
-    tinyrt_status_t r = tinyrt_store_commit(m->install);
+    tinyrt_package_verifier_t verifier=m->verifier;
+    verifier.require_aot_on_install=m->require_aot_on_install;
+    tinyrt_status_t r=tinyrt_store_commit_with_context(m->install,&verifier);
     tinyrt_manager_abort(m);
     return r;
 }

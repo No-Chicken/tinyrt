@@ -130,7 +130,7 @@ tinyrt_status_t tr_recover(tinyrt_store_t *s) {
         for(uint32_t i=0;i<d[pick].count;++i) {
             tr_record_t *r=&d[pick].records[i];tinyrt_app_info_t actual={0};
             result=s->verify(s->verify_ctx,&s->io,r->offset,r->app.package_size,&actual);
-            if(result==TINYRT_VERIFY_FAILED||result==TINYRT_CORRUPT) {
+            if(result==TINYRT_VERIFY_FAILED||result==TINYRT_CORRUPT||result==TINYRT_ERR_API_LEVEL) {
                 r->quarantined=true;result=TINYRT_OK;continue;
             }
             /* Resource, IO, busy and verifier configuration errors are not

@@ -48,7 +48,7 @@ def fixtures(folder):
         ("title_too_high",88,b"\xf4\x90\x80\x80\0"+bytes(59)),
         ("title_truncated",88,b"\xe4\0"+bytes(62)),
         ("title_continuation",88,b"\x80\0"+bytes(62)),
-        ("title_padding",151,b"x"), ("reserved",184,b"x"), ("payload_hash",152,bytes(32))]:
+        ("title_padding",151,b"x"), ("reserved",188,b"x"), ("payload_hash",152,bytes(32))]:
         changed(name,offset,value)
     bad=bytearray(good); bad[300]^=1; cases["payload_tamper"]=bytes(bad)
     cases["truncated"]=good[:-1]; cases["appended"]=good+b"x"; cases["short_header"]=good[:255]

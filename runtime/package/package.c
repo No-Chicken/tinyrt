@@ -53,8 +53,10 @@ static bool valid_title(const uint8_t *p) {
 static bool parse_header(const uint8_t h[256], uint32_t length, tinyrt_package_metadata_t *m) {
     uint32_t format=get16(h+8);
     if(format!=1 || memcmp(h,"TRPKG001",8) || get16(h+10)!=256 ||
-       get32(h+12)!=length || !all_zero(h+184,8)) return false;
+       get32(h+12)!=length || !all_zero(h+188,4)) return false;
     m->format_version=format;
+    m->policy.min_api_level=get32(h+184);
+    if(!m->policy.min_api_level) m->policy.min_api_level=1;
     if(get32(h+16)!=256 || get32(h+20)<1 || get32(h+20)>4 ||
        get32(h+24)!=16 || get32(h+28)) return false;
     m->app.id.version=get32(h+32);
@@ -145,6 +147,8 @@ static tinyrt_status_t inspect_aot(const tinyrt_package_verifier_t *v,
             m->fallback_reason=TINYRT_PACKAGE_FALLBACK_COMPAT;
         else m->execution_kind=TINYRT_PACKAGE_EXEC_AOT;
     }
+    if(v->require_aot_on_install && m->execution_kind!=TINYRT_PACKAGE_EXEC_AOT)
+        return m->fallback_reason==TINYRT_PACKAGE_FALLBACK_COMPAT ? TINYRT_ERR_AOT_COMPAT : TINYRT_ERR_AOT_TARGET;
     if(m->execution_kind!=TINYRT_PACKAGE_EXEC_AOT && !m->wasm_size) return TINYRT_VERIFY_FAILED;
     return TINYRT_OK;
 }
@@ -166,10 +170,12 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     if(r!=TINYRT_OK) return r;
     tinyrt_package_metadata_t m={0};
     if(!parse_header(header,length,&m)) return TINYRT_VERIFY_FAILED;
+    if(m.policy.min_api_level>TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     r=parse_sections(io,off,length,get32(header+20),&m);
     if(r!=TINYRT_OK) return r;
     m.execution_kind=TINYRT_PACKAGE_EXEC_WASM;
     if(m.wasm_size && !v->validate_wasm) return TINYRT_INVALID_ARGUMENT;
+    if(v->require_aot_on_install && !m.aot_size) return TINYRT_ERR_AOT_MISSING;
     if(m.aot_size) {
         r=inspect_aot(v,io,off,&m);
         if(r!=TINYRT_OK) return r;

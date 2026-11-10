@@ -42,6 +42,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(natives, [(x["name"], x["signature"]) for x in spec["imports"]])
         permissions = re.search(r'required_permission\[\] = \{([^}]+)', source).group(1)
         self.assertEqual([int(x.strip()) for x in permissions.split(",")], [x["permission"] for x in spec["imports"]])
+        levels = re.search(r'since_level\[\] = \{([^}]+)', source).group(1)
+        self.assertEqual([int(x) for x in levels.split(",")], [x["since_level"] for x in spec["imports"]])
         native_arity = re.search(r'arity\[\] = \{([^}]+)', source).group(1)
         self.assertEqual([int(x.strip()) for x in native_arity.split(",")], [x["signature"].split(")")[0].count("i") for x in spec["imports"]])
         exports = re.search(r'exports\[\] = \{([^}]+)', source).group(1)
@@ -84,7 +86,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(info["response_max_bytes"], 254)
         self.assertEqual(info["response_max_bytes"] + 2, spec["management"]["max_message"])
         fields = info["response"]
-        self.assertEqual(set(fields), {"schema", "firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build", "transports"})
+        self.assertEqual(set(fields), {"schema", "abi", "api_level", "firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build", "transports"})
         self.assertEqual(fields["schema"], {"type": "integer", "value": 1})
         for name in ("firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build"):
             self.assertEqual(fields[name]["type"], "string", name)

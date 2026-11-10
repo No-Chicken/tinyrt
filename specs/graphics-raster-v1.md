@@ -1,4 +1,4 @@
-# Raster graphics extension (ABI 1, core 0.0.3)
+# Raster graphics extension (ABI 1)
 
 This extension is optional. Existing immediate imports, permissions, package version,
 AOT safety profile, mandatory initial legacy `draw_clear`, and `draw_skip` semantics

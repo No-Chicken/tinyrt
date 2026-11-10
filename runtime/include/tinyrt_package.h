@@ -8,6 +8,7 @@ extern "C" {
 #endif
 #define TINYRT_PACKAGE_HEADER_SIZE 256u
 #define TINYRT_PACKAGE_ABI_VERSION 1u
+#define TINYRT_HOST_API_LEVEL 1u
 #define TINYRT_PERMISSION_DRAW 1u
 #define TINYRT_PERMISSION_INPUT 2u
 #define TINYRT_PERMISSION_STORAGE 4u
@@ -17,6 +18,7 @@ extern "C" {
 #define TINYRT_PERMISSION_ALL 63u
 typedef struct {
     uint32_t abi_version, permissions, max_memory_pages, instruction_budget;
+    uint32_t min_api_level; /* Zero-initialized policies use the Level 1 baseline. */
 } tinyrt_package_policy_t;
 #define TINYRT_AOT_LOOP_POLL 1u
 #define TINYRT_AOT_BOUNDS_CHECKS 2u
@@ -77,6 +79,7 @@ typedef struct {
     const tinyrt_package_aot_profile_t *aot_profile; /* Host-owned; NULL disables AOT. */
     tinyrt_package_aot_validate_fn validate_aot;
     void *aot_ctx;
+    bool require_aot_on_install;
 } tinyrt_package_verifier_t;
 /* io must remain immutable for this synchronous call. Reads <=1024 bytes.
  * Metadata offsets are package-relative. Output is zero on failure.

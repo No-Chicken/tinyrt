@@ -105,3 +105,13 @@ y=1 pressed/0 released, arg=0. Mask 120 combines them. Cancel clears held touch
 and keys. Products keep their host exit policy independent of guest input.
 `runtime_backend()` requires no permission and returns 0 for classic interpreter
 or 1 for AOT. Guests may choose bounded work batches; this is not a speed metric.
+
+## S31 帧租约与条带发送
+
+双核宿主将 Guest 工作线程放在 Core 1，将 LVGL/栅格化线程放在 Core 0；单核宿主沿用默认调度。菜单 tick 和刷新周期不因应用改变。新帧通知唤醒 UI 线程，只有独占应用会话使用直接条带路径。
+
+发布/获取使用宿主已有的帧队列与资源写时复制。渲染持有不可变帧租约，期间不能修改帧记录或资源快照。Host C 接口 `tinyrt_gfx_render_context_begin()` 在租约内校验一次记录和工作量，`tinyrt_gfx_render_context_region()` 每次仍检查目标区域边界；最后一条带发送完成后才能释放帧。该 context 不是 Guest API，不能跨帧保存。
+
+共享纹理、无缩放/旋转的 sprite batch 使用逐行裁剪路径；其他变换使用通用渲染器。透明索引、调色板、资源快照和绘制顺序保持相同语义。应用报告本帧与上帧覆盖范围的并集；宿主再与圆屏可见区域相交。第一帧必须完整刷新。
+
+现有两块内部 SRAM 条带交替使用：CPU 绘制另一块，等待上一块 DMA 完成，随后提交；绝不修改正在发送的缓冲。不额外分配两块 PSRAM 整帧，也不启用全局 PPA 或 TE 等待。是否增加这些路径应由单独测量决定。

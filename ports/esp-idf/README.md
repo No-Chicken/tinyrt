@@ -10,15 +10,14 @@
 
 这是一项加载器状态约束，**不构成硬件 W^X**：芯片的既有数据别名仍在地址空间内，具备主机原生地址访问能力的代码仍可能重建它。AOT 信任边界依赖固定编译链、Wasm 边界检查、受信签名和运行库加载策略。默认继续开启 `CONFIG_ESP_SYSTEM_MEMPROT`，是否可正常执行必须由对应固件的板测确认。
 
-`TINYRT_ESP_AOT_MAP_BUDGET` 默认限制全部 AOT 原生映射为 512 KiB，包括代码和原生数据，按较大的指令/数据缓存行粒度计费。当前 ESP32-S3 配置为 64 字节。这项平台上限独立于 Guest 分配预算；统一的应用预算仍需由运行库另外计账。`tinyrt_esp_exec_memory_get_stats()` 返回当前字节数和映射数，用于装卸验收。
+`TINYRT_ESP_AOT_MAP_BUDGET` 默认限制全部 AOT 原生映射为 512 KiB，包括代码和原生数据，按较大的指令/数据缓存行粒度计费。这项平台上限独立于 Guest 分配预算；统一的应用预算仍需由运行库另外计账。`tinyrt_esp_exec_memory_get_stats()` 返回当前字节数和映射数，用于装卸验收。
 
 接线要求：
 
 - 使用固定上游版本及 `0001-exec-env-cancellation.patch`、`0002-aot-dbus-writes.patch` 等已批准运行库补丁。
 - 从平台源列表移除上游 `espidf_memmap.c`，加入本目录 `.c` 和头文件目录。
 - ESP-IDF 组件依赖包含 `esp_mm`、`esp_psram`；启用 `WASM_MEM_DUAL_BUS_MIRROR=1`。
-- `.text` 拷贝、Xtensa `R_XTENSA_32` 和 `R_XTENSA_SLOT0_OP` 重定位走数据别名。Xtensa PLT 大小为零，不写额外跳板；`0002` 修正末尾填充写入，并使代码/数据保护失败向上传播。
-- `0004-esp-idf-native-stack.patch` 通过 IDF 公开 API 获取当前任务最低栈地址，避免 trace 关闭时上游返回 NULL 而使原生栈检查失效。IDF 6 使用 `xTaskGetStackStart(NULL)`，更早版本使用 `pxTaskGetStackStart(NULL)`。Xtensa 栈向低地址增长；WAMR 在基址上加 `WASM_STACK_GUARD_SIZE` 留出处理异常的余量，实际安全余量仍由板测验证。
+- `0004-esp-idf-native-stack.patch` 通过 IDF 公开 API 获取当前任务最低栈地址，避免 trace 关闭时上游返回 NULL 而使原生栈检查失效。IDF 6 使用 `xTaskGetStackStart(NULL)`，更早版本使用 `pxTaskGetStackStart(NULL)`。WAMR 在基址上加 `WASM_STACK_GUARD_SIZE` 留出处理异常的余量，实际安全余量仍由板测验证。
 
 主机测试在 Visual Studio x64 环境运行：
 
@@ -29,4 +28,4 @@ python esp32/tinyrt/ports/esp-idf/tests/test_stack_boundary.py --source path/to/
 
 测试覆盖分配失败、溢出、单块和总配额、跨页别名缺失、缓存同步失败、封存状态和 50 次完整装卸。另在子进程中注入封存后 MMU 反查失败，要求在释放预算前终止。`tests/loader/` 使用真实 WAMR AOT 加载器注入 `os_mprotect` 失败，要求拒绝模块且映射计数归零。主机模拟不能替代 MEMPROT 开启时的实际芯片执行验证。
 
-公开依据：[ESP-IDF MMU 内存管理](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/mm.html)、[缓存同步](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/api-reference/system/mm_sync.html)、[当前任务栈最低地址](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s3/api-reference/system/freertos_additions.html#_CPPv418xTaskGetStackStart12TaskHandle_t)。实现同时核对当前 IDF 的 `esp_mmu_map.c`、`esp_cache_msync.c` 和 ESP32-S3 MMU HAL。
+公开依据：[ESP-IDF MMU 内存管理](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s31/api-reference/system/mm.html)、[缓存同步](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s31/api-reference/system/mm_sync.html)、[当前任务栈最低地址](https://docs.espressif.com/projects/esp-idf/en/stable/esp32s31/api-reference/system/freertos_additions.html#_CPPv418xTaskGetStackStart12TaskHandle_t)。实现同时核对当前 IDF 的 `esp_mmu_map.c`、`esp_cache_msync.c` 和 目标芯片的 MMU HAL。

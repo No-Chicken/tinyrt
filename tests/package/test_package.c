@@ -56,6 +56,15 @@ int main(int argc,char **argv) {
     CHECK(!strcmp(metadata.title,"\xe8\xae\xa1\xe6\x95\xb0\xe5\x99\xa8"));
     uint8_t expected[32]; CHECK(load(argv[1],"expected.sha256",expected,32)==32);
     CHECK(!memcmp(expected,metadata.app.id.sha256,32) && wasm_calls==1 && !bad_reads);
+    CHECK(metadata.policy.min_api_level==1);
+    config.require_aot_on_install=true;
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_ERR_AOT_MISSING);
+    config.require_aot_on_install=false;
+    data[184]=1;
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
+    data[184]=2;
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_ERR_API_LEVEL);
+    data[184]=0;
     tinyrt_app_info_t app;
     CHECK(tinyrt_package_verify(&config,&io,base,data_size,&app)==TINYRT_OK);
     CHECK(!memcmp(expected,app.id.sha256,32) && app.package_size==data_size);
@@ -139,10 +148,11 @@ int main(int argc,char **argv) {
     fixture(argv[1],"section_aot.pkg");expected_wasm_offset=304;
     tinyrt_package_aot_profile_t profile={.enabled=true,.format_version=5,.target_arch="xtensa",.target_cpu="esp32s3"};
     memset(profile.compat_id,4,sizeof(profile.compat_id));
-    config.aot_profile=&profile;config.validate_aot=aot_stub;
+    config.aot_profile=&profile;config.validate_aot=aot_stub;config.require_aot_on_install=true;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
     CHECK(metadata.execution_kind==TINYRT_PACKAGE_EXEC_AOT && metadata.aot_offset==576 && aot_calls==1 && wasm_calls==1);
     CHECK(metadata.aot.compiler_sha256[0]==6 && !bad_reads);
+    config.require_aot_on_install=false;
     for(unsigned i=0;i<3;++i) {
         fixture(argv[1],"section_aot.pkg");
         if(i==0) profile.enabled=false;
@@ -150,6 +160,9 @@ int main(int argc,char **argv) {
         else profile.compat_id[0]^=1;
         CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
         CHECK(metadata.execution_kind==TINYRT_PACKAGE_EXEC_WASM && (unsigned)metadata.fallback_reason==i+1 && !aot_calls && wasm_calls==1);
+        config.require_aot_on_install=true;
+        CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==(i==2?TINYRT_ERR_AOT_COMPAT:TINYRT_ERR_AOT_TARGET));
+        config.require_aot_on_install=false;
         profile.enabled=true;memset(profile.target_cpu,0,sizeof(profile.target_cpu));
         strcpy(profile.target_cpu,"esp32s3");memset(profile.compat_id,4,sizeof(profile.compat_id));
     }

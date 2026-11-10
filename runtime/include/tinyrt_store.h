@@ -24,7 +24,8 @@ typedef struct {
 typedef enum {
     TINYRT_OK = 0, TINYRT_ALREADY_INSTALLED, TINYRT_INVALID_ARGUMENT,
     TINYRT_IO_ERROR, TINYRT_CORRUPT, TINYRT_NO_SPACE, TINYRT_BUSY,
-    TINYRT_CONFLICT, TINYRT_NOT_FOUND, TINYRT_VERIFY_FAILED, TINYRT_NO_MEMORY
+    TINYRT_CONFLICT, TINYRT_NOT_FOUND, TINYRT_VERIFY_FAILED, TINYRT_NO_MEMORY, TINYRT_ERR_API_LEVEL,
+    TINYRT_ERR_AOT_MISSING, TINYRT_ERR_AOT_TARGET, TINYRT_ERR_AOT_COMPAT
 } tinyrt_status_t;
 typedef struct {
     void *ctx;
@@ -71,6 +72,7 @@ tinyrt_status_t tinyrt_store_begin(tinyrt_store_t *, const tinyrt_app_info_t *, 
 tinyrt_status_t tinyrt_store_write(tinyrt_install_t *, uint32_t, const void *, uint32_t);
 /* Commit retains handle. Repeat returns ALREADY_INSTALLED. */
 tinyrt_status_t tinyrt_store_commit(tinyrt_install_t *);
+tinyrt_status_t tinyrt_store_commit_with_context(tinyrt_install_t *,void *verify_ctx);
 /* NULL safe; frees handle. Never pass a freed pointer. Does not undo commit. */
 void tinyrt_store_abort(tinyrt_install_t *);
 tinyrt_status_t tinyrt_store_uninstall(tinyrt_store_t *, const char *);

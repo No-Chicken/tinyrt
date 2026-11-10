@@ -161,6 +161,10 @@ tinyrt_status_t tinyrt_store_write(tinyrt_install_t *h,uint32_t off,const void *
 }
 tinyrt_status_t tinyrt_store_commit(tinyrt_install_t *h) {
     if(!h) return TINYRT_INVALID_ARGUMENT;
+    return tinyrt_store_commit_with_context(h,h->store->verify_ctx);
+}
+tinyrt_status_t tinyrt_store_commit_with_context(tinyrt_install_t *h,void *verify_ctx) {
+    if(!h) return TINYRT_INVALID_ARGUMENT;
     if(h->committed) return TINYRT_ALREADY_INSTALLED;
     if(h->failed) return TINYRT_IO_ERROR;
     if(h->received!=h->expected.package_size) return TINYRT_INVALID_ARGUMENT;
@@ -169,7 +173,7 @@ tinyrt_status_t tinyrt_store_commit(tinyrt_install_t *h) {
     tinyrt_status_t r=s->io.sync(s->io.ctx);
     tinyrt_app_info_t actual={0};
     if(r==TINYRT_OK)
-        r=s->verify(s->verify_ctx,&s->io,h->offset,h->received,&actual);
+        r=s->verify(verify_ctx,&s->io,h->offset,h->received,&actual);
     if(r==TINYRT_OK&&(!tr_id_valid(actual.id.app_id)||!tr_app_equal(&actual,&h->expected)))
         r=TINYRT_VERIFY_FAILED;
     if(r!=TINYRT_OK) {h->failed=true;return refresh_after_error(s,r);}

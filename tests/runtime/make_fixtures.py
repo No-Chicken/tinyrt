@@ -34,6 +34,7 @@ def module(mode='valid'):
     if mode=='post': ex.append(s('__post_instantiate')+b'\x00\x08')
     init=c(0)+c(0)+call(3)+b'\x24\x00'+c(0)
     event=b'\x23\x00'+c(1)+b'\x6a\x24\x00'+c(0)+b'\x23\x00'+call(4)+b'\x1a'+c(0)
+    if mode=='divide':event=c(1)+c(0)+b'\x6d'  # i32.div_s
     if mode=='spin':event=b'\x03\x40\x0c\x00\x0b'+c(0)
     if mode=='badkey':event=c(16)+c(1)+call(4)+b'\x1a'+c(0)
     if mode=='clock':event=call(5)+b'\x1a'+c(0)
@@ -63,5 +64,5 @@ def module(mode='valid'):
 if __name__=='__main__':
     import sys
     out=Path(sys.argv[1]) if len(sys.argv)>1 else Path(__file__).parent/'fixtures'; out.mkdir(parents=True,exist_ok=True)
-    for mode in ['valid','unknown','wasi','nomax','shared','huge','ctor','post','start','spin','badkey','clock','oob','overflow','noclear','badutf8','badsig','malformed','bulkfill','bulkcopy','bulkinit','datadrop','tablecopy','tablefill']:
+    for mode in ['valid','unknown','wasi','nomax','shared','huge','ctor','post','start','divide','spin','badkey','clock','oob','overflow','noclear','badutf8','badsig','malformed','bulkfill','bulkcopy','bulkinit','datadrop','tablecopy','tablefill']:
         (out/(mode+'.wasm')).write_bytes(module(mode))

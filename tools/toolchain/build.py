@@ -9,6 +9,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 from pathlib import Path
 import re
 import shutil
@@ -111,8 +112,11 @@ def main() -> None:
     parser.add_argument("--source-lock", type=Path, default=ROOT / "source-lock-esp32s31.json")
     parser.add_argument("--riscv", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
-    if os.name != "nt" or not shutil.which("cl"):
+    if os.name == "nt" and not shutil.which("cl"):
         parser.error("run in a Visual Studio x64 developer environment on Windows")
+    host_platform={"Windows":"windows","Linux":"linux","Darwin":"darwin"}.get(platform.system())
+    host_target={"amd64":"X86_64","x86_64":"X86_64","arm64":"AARCH64","aarch64":"AARCH64"}.get(platform.machine().lower())
+    if not host_platform or not host_target: parser.error("unsupported native compiler host")
     if not 1 <= args.jobs <= 64:
         parser.error("--jobs must be between 1 and 64")
     for tool in ("cmake", "ninja", "git"):
@@ -122,8 +126,8 @@ def main() -> None:
     work.mkdir(parents=True, exist_ok=True)
     lock_path = args.source_lock.resolve()
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    git = ["git", "-c", "core.longpaths=true",
-           "-c", "http.sslBackend=openssl"]
+    git = ["git"]
+    if os.name=="nt": git+=["-c","core.longpaths=true","-c","http.sslBackend=openssl"]
     if args.proxy:
         git += ["-c", "http.proxy=" + args.proxy]
     wamr, llvm = work / "wamr-upstream", work / "llvm-project"
@@ -158,10 +162,11 @@ def main() -> None:
             raise RuntimeError("WAMR source has unrecorded files")
     finally:
         expected_index.unlink(missing_ok=True)
-    common = ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release", "-DCMAKE_C_FLAGS=/utf-8",
-              "-DCMAKE_CXX_FLAGS=/utf-8"]
+    common = ["-G", "Ninja", "-DCMAKE_BUILD_TYPE=Release"]
+    if os.name=="nt":
+        common+=["-DCMAKE_C_FLAGS=/utf-8","-DCMAKE_CXX_FLAGS=/utf-8"]
     llvm_command = ["cmake", "-S", str(llvm / "llvm"), "-B", str(llvm_build), *common,
-        "-DLLVM_ENABLE_DIA_SDK=OFF", "-DLLVM_TARGETS_TO_BUILD=X86;RISCV",
+        "-DLLVM_ENABLE_DIA_SDK=OFF", "-DLLVM_TARGETS_TO_BUILD="+("AArch64;RISCV" if host_target=="AARCH64" else "X86;RISCV"),
         "-DLLVM_EXPERIMENTAL_TARGETS_TO_BUILD=Xtensa", "-DLLVM_INCLUDE_TESTS=OFF",
         "-DLLVM_INCLUDE_EXAMPLES=OFF", "-DLLVM_INCLUDE_BENCHMARKS=OFF", "-DLLVM_INCLUDE_DOCS=OFF",
         "-DLLVM_ENABLE_TERMINFO=OFF", "-DLLVM_ENABLE_ZLIB=OFF", "-DLLVM_ENABLE_ZSTD=OFF",
@@ -173,14 +178,15 @@ def main() -> None:
            log=work / "build-llvm.log")
     wamrc_command = ["cmake", "-S", str(wamr / "wamr-compiler"), "-B", str(wamrc_build), *common,
         "-DWAMR_BUILD_WITH_CUSTOM_LLVM=1", "-DLLVM_DIR=" + str(llvm_build / "lib/cmake/llvm"),
-        "-DWAMR_DISABLE_HW_BOUND_CHECK=1", "-DWAMR_BUILD_PLATFORM=windows", "-DWAMR_BUILD_TARGET=X86_64",
+        "-DWAMR_DISABLE_HW_BOUND_CHECK=1", "-DWAMR_BUILD_PLATFORM="+host_platform, "-DWAMR_BUILD_TARGET="+host_target,
         "-DWAMR_BUILD_LIBC_WASI=0", "-DWAMR_BUILD_LIB_PTHREAD=0", "-DWAMR_BUILD_LIB_WASI_THREADS=0",
         "-DWAMR_BUILD_LOOP_POLL=1"]
     invoke(wamrc_command, log=work / "configure-wamrc.log")
     invoke(["cmake", "--build", str(wamrc_build), "--parallel", str(args.jobs)],
            log=work / "build-wamrc.log")
-    binary = wamrc_build / "wamrc.exe"
-    compiler = subprocess.run(["cl"], capture_output=True, encoding="utf-8", errors="replace")
+    binary = wamrc_build / ("wamrc.exe" if os.name=="nt" else "wamrc")
+    cc = "cl" if os.name=="nt" else os.environ.get("CC","cc")
+    compiler = subprocess.run([cc] if os.name=="nt" else [cc,"--version"], capture_output=True, encoding="utf-8", errors="replace")
     manifest = {"schema": 1, "source_lock_sha256": digest(lock_path),
         "build_script_sha256": digest(Path(__file__)),
         "sources": {"wamr": lock["wamr"], "llvm": lock["llvm"]},
@@ -188,7 +194,7 @@ def main() -> None:
                     for name, path in zip(lock["patches"], patches)],
         "compiler": {"path": str(binary), "sha256": digest(binary),
                      "version": invoke([str(binary), "--version"], capture=True)},
-        "host": {"cc": shutil.which("cl"), "cc_version": compiler.stdout + compiler.stderr,
+        "host": {"cc": shutil.which(cc), "cc_version": compiler.stdout + compiler.stderr,
                  "cmake": invoke(["cmake", "--version"], capture=True),
                  "ninja": invoke(["ninja", "--version"], capture=True), "python": sys.version},
         "configure_commands": [llvm_command, wamrc_command],

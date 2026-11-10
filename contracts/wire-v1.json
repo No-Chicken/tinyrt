@@ -9,7 +9,7 @@
       "TINYRT_PERMISSION_STORAGE": 4,
       "TINYRT_PERMISSION_CLOCK": 8,
       "TINYRT_PERMISSION_HAPTIC": 32,
-      "TINYRT_PERMISSION_ALL": 63,
+      "TINYRT_PERMISSION_ALL": 447,
       "TINYRT_AOT_LOOP_POLL": 1,
       "TINYRT_AOT_BOUNDS_CHECKS": 2,
       "TINYRT_AOT_STACK_CHECKS": 4,
@@ -17,7 +17,9 @@
       "TINYRT_COVER_CODEC_RGB565LE_TWO_SIZES": 1,
       "TINYRT_COVER_HEADER_SIZE": 32,
       "TINYRT_COVER_SECTION_SIZE": 133232,
-      "TINYRT_PERMISSION_AUDIO": 16
+      "TINYRT_PERMISSION_AUDIO": 16,
+      "TINYRT_PERMISSION_SENSOR": 128,
+      "TINYRT_PERMISSION_SYSTEM": 256
     },
     "runtime/include/tinyrt_store.h": {
       "TINYRT_STORE_SIZE": 5111808,
@@ -48,6 +50,7 @@
       "TINYRT_OP_APP_COVER": 28,
       "TINYRT_OP_MOBILE_STATUS": 29,
       "TINYRT_OP_GET_DEVICE_INFO": 30,
+      "TINYRT_OP_LAST_CRASH": 31,
       "TINYRT_CAP_COVER_MOBILE_CONFIRM": 128
     }
   },
@@ -112,6 +115,12 @@
     "header_size": 10,
     "frame_size": 20,
     "max_message": 256,
+    "last_crash": {
+      "opcode": 31,
+      "request_size": 0,
+      "response": "schema:u16le=1, phase:u8 (1 init, 2 event, 3 render, 4 stop), reason_length:u8, function_index:u32le, pc:u32le, identity68, reason[reason_length] (UTF-8, 1..160 bytes)",
+      "semantics": "Latest failed guest callback in manager RAM. No record returns NOT_FOUND. Unknown function index or PC is 0xffffffff. PC denotes a function-relative Wasm byte offset when available."
+    },
     "device_info": {
       "opcode": 30,
       "request_size": 0,

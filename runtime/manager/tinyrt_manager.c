@@ -21,6 +21,7 @@ struct tinyrt_manager {
     tinyrt_manager_audio_t audio;
     tinyrt_manager_haptic_t haptic;
     uint8_t *audio_buffer;
+    tinyrt_crash_t crash;
     tinyrt_app_info_t running;
     uint32_t resource_offset,resource_size;
     uint8_t *resource_cache;
@@ -139,12 +140,30 @@ static tinyrt_status_t persist(tinyrt_manager_t *m, bool force) {
     }
     return r;
 }
+tinyrt_status_t tinyrt_manager_last_crash(const tinyrt_manager_t *m, tinyrt_crash_t *out) {
+    if (!m || !out) return TINYRT_INVALID_ARGUMENT;
+    if (!m->crash.phase) return TINYRT_NOT_FOUND;
+    *out = m->crash;
+    return TINYRT_OK;
+}
+
+static void record_crash(tinyrt_manager_t *m, tinyrt_status_t status, tinyrt_crash_phase_t phase) {
+    if (status != TINYRT_VERIFY_FAILED) return;
+    m->crash.app = m->running.id;
+    m->crash.phase = phase;
+    m->crash.function_index = UINT32_MAX;
+    m->crash.pc = UINT32_MAX;
+    const char *reason = tinyrt_runtime_last_error(m->runtime);
+    snprintf(m->crash.reason, sizeof(m->crash.reason), "%s", reason && *reason ? reason : "guest callback failed");
+}
+
 tinyrt_status_t tinyrt_manager_stop(tinyrt_manager_t *m) {
     if (!m)
         return TINYRT_INVALID_ARGUMENT;
     if (!m->runtime)
         return TINYRT_OK;
     tinyrt_status_t r = tinyrt_runtime_stop(m->runtime);
+    record_crash(m, r, TINYRT_CRASH_STOP);
     const char *detail = r == TINYRT_OK ? "stop persistence failed" : tinyrt_runtime_last_error(m->runtime);
     if (r == TINYRT_OK)
         r = persist(m, true);
@@ -441,6 +460,7 @@ static uint64_t perf_elapsed(tinyrt_manager_t *m,uint64_t start) {
 static tinyrt_status_t finish_call(tinyrt_manager_t *m, tinyrt_frame_t *out) {
     uint64_t begin=perf_begin(m);
     tinyrt_status_t r = tinyrt_runtime_render(m->runtime, out);
+    record_crash(m, r, TINYRT_CRASH_RENDER);
     m->perf.render_us+=perf_elapsed(m,begin);m->perf.render_calls++;
     if (r == TINYRT_OK)
         r = persist(m, false);
@@ -495,7 +515,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL,m->storage.device};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {
@@ -535,6 +555,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     }
     uint64_t begin=perf_begin(m);
     r = tinyrt_runtime_init(m->runtime, width, height);
+    record_crash(m, r, TINYRT_CRASH_INIT);
     m->perf.init_us+=perf_elapsed(m,begin);m->perf.init_calls++;
     if (r != TINYRT_OK)
         return fail_runtime(m, r);
@@ -551,6 +572,7 @@ tinyrt_status_t tinyrt_manager_event(tinyrt_manager_t *m, int32_t kind, int32_t 
         return TINYRT_NOT_FOUND;
     uint64_t begin=perf_begin(m);
     tinyrt_status_t r = tinyrt_runtime_event(m->runtime, kind, x, y, arg);
+    record_crash(m, r, TINYRT_CRASH_EVENT);
     m->perf.event_us+=perf_elapsed(m,begin);m->perf.event_calls++;
     if (r != TINYRT_OK)
         return fail_runtime(m, r);

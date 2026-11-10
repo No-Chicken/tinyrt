@@ -50,6 +50,15 @@ typedef struct tinyrt_frame {
     uint8_t gfx_records[TINYRT_GFX_MAX_BYTES];
 } tinyrt_frame_t;
 typedef struct {
+    int32_t (*imu_config)(uint32_t rate,uint32_t mask);
+    int32_t (*imu_read)(int32_t values[7]);
+    int32_t (*time_local)(int32_t values[9]);
+    int32_t (*battery_info)(int32_t values[4]);
+    int32_t (*display_brightness)(int32_t percent);
+    int32_t (*screen_keep_on)(int32_t on);
+} tinyrt_device_api_t;
+
+typedef struct {
     void *ctx;
     int32_t (*kv_get)(void *, uint32_t key, int32_t fallback);
     tinyrt_status_t (*kv_set)(void *, uint32_t key, int32_t value);
@@ -65,6 +74,7 @@ typedef struct {
     tinyrt_status_t (*haptic_stop)(void *);
     void (*debug_log)(void *,const char *text,uint32_t length);
     uint32_t (*random_u32)(void *);
+    const tinyrt_device_api_t *device;
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

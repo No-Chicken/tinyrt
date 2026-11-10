@@ -1,6 +1,6 @@
 {
   "abi_version": 1,
-  "api_level": 2,
+  "api_level": 3,
   "module": "tinyrt",
   "imports": [
     {
@@ -16,6 +16,20 @@
       "since_level": 1
     },
     {
+      "name": "battery_info",
+      "signature": "(ii)i",
+      "permission": 256,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "tinyrt_battery_t, 4 × i32 LE (16 bytes)",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
       "name": "clock_interval",
       "signature": "(i)i",
       "permission": 8,
@@ -25,7 +39,29 @@
       "name": "debug_log",
       "signature": "(ii)i",
       "permission": 0,
-      "since_level": 2
+      "since_level": 2,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "UTF-8 1–128 bytes, ≤ 50/s",
+      "errors": "始终返回 0，超限丢弃 / always 0, drops excess"
+    },
+    {
+      "name": "display_brightness",
+      "signature": "(i)i",
+      "permission": 256,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "10..100%",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
     },
     {
       "name": "draw_arc",
@@ -160,6 +196,31 @@
       "since_level": 1
     },
     {
+      "name": "imu_config",
+      "signature": "(ii)i",
+      "permission": 128,
+      "since_level": 3,
+      "stages": [
+        "init"
+      ],
+      "limits": "15 / 30 / 60 / 120 Hz, mask 0..7",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
+      "name": "imu_read",
+      "signature": "(ii)i",
+      "permission": 128,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "tinyrt_imu_t, 7 × 32-bit LE (28 bytes)",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
       "name": "input_events",
       "signature": "(i)i",
       "permission": 2,
@@ -187,7 +248,15 @@
       "name": "random_u32",
       "signature": "()i",
       "permission": 0,
-      "since_level": 2
+      "since_level": 2,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "u32",
+      "errors": "随机数 / random value；无随机源触发 trap / missing source traps"
     },
     {
       "name": "runtime_backend",
@@ -196,10 +265,57 @@
       "since_level": 1
     },
     {
+      "name": "screen_keep_on",
+      "signature": "(i)i",
+      "permission": 256,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "0 关闭 / off, 1 开启 / on",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
       "name": "sys_info",
       "signature": "(ii)i",
       "permission": 0,
-      "since_level": 2
+      "since_level": 2,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "9 × u32 LE (36 bytes)",
+      "errors": "0 成功 / success；−2 缓冲区过小 / short buffer；越界触发 trap / invalid address traps"
+    },
+    {
+      "name": "time_local",
+      "signature": "(ii)i",
+      "permission": 8,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event",
+        "render",
+        "stop"
+      ],
+      "limits": "tinyrt_datetime_t, 9 × i32 LE (36 bytes), valid=0 时间未设置 / clock unset",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
+    },
+    {
+      "name": "time_subscribe",
+      "signature": "(i)i",
+      "permission": 8,
+      "since_level": 3,
+      "stages": [
+        "init"
+      ],
+      "limits": "0 取消 / disable, 1 分钟事件 / minute events",
+      "errors": "0 成功 / success；−2 不可用 / unavailable；非法参数触发 trap / invalid arguments trap"
     }
   ],
   "exports": [
@@ -253,6 +369,18 @@
     "TINYRT_EV_GAMEPAD": {
       "value": 8,
       "since_level": 1
+    },
+    "TINYRT_EV_GYRO": {
+      "value": 10,
+      "since_level": 3
+    },
+    "TINYRT_EV_GESTURE": {
+      "value": 11,
+      "since_level": 3
+    },
+    "TINYRT_EV_MINUTE": {
+      "value": 12,
+      "since_level": 3
     }
   },
   "storage": {
@@ -442,6 +570,14 @@
     "HAPTIC": {
       "value": 32,
       "since_level": 1
+    },
+    "SENSOR": {
+      "value": 128,
+      "since_level": 3
+    },
+    "SYSTEM": {
+      "value": 256,
+      "since_level": 3
     }
   }
 }

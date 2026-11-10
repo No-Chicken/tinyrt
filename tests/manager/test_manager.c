@@ -161,8 +161,13 @@ static void test_coalescing(void) {
  clock_ms+=1;
  CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_OK&&saves==4&&kv_values[0]==55);
  CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_OK&&saves==4);
+ tinyrt_crash_t crash;
+ CHECK(tinyrt_manager_last_crash(m,&crash)==TINYRT_NOT_FOUND);
  runtime_fail_event=1;
  CHECK(tinyrt_manager_event(m,1,0,0,0,&frame)==TINYRT_VERIFY_FAILED);
+ CHECK(tinyrt_manager_last_crash(m,&crash)==TINYRT_OK);
+ CHECK(crash.phase==TINYRT_CRASH_EVENT && !memcmp(&crash.app,&a.id,sizeof(a.id)));
+ CHECK(crash.function_index==UINT32_MAX && crash.pc==UINT32_MAX && !strcmp(crash.reason,"test guest failure"));
  runtime_fail_event=0;
  CHECK(kv_values[0]==55&&saves==4);
  CHECK(tinyrt_manager_start(m,&a.id,466,466,&frame)==TINYRT_OK&&frame.commands[0].rgb==55);

@@ -112,6 +112,7 @@ struct tinyrt_runtime {
     int32_t width, height;
     uint32_t clock_interval_ms, callback, input_events, audio_requests;
     bool ready, failed, stopped, skipped, aot;
+    uint32_t hardware_events;
     uint32_t log_since_ms, log_count, log_dropped;
     char error[192];
 };
@@ -380,6 +381,75 @@ static uint32_t now_ms(wasm_exec_env_t e)
 }
 /* WAMR sorts this table in place. Keep lexical order so the parallel policy
  * tables retain their association after native registration. */
+static int32_t device_read(tinyrt_runtime_t *r,uint32_t ptr,uint32_t length,
+                           uint32_t count,int32_t (*read_values)(int32_t *))
+{
+    int32_t values[9]={0};
+    uint32_t bytes=count*sizeof(values[0]);
+    if(length<bytes) return fail(r,"device result buffer too small");
+    if(!wasm_runtime_validate_app_addr(r->instance,ptr,bytes)) return fail(r,"device result out of bounds");
+    void *dst=wasm_runtime_addr_app_to_native(r->instance,ptr);
+    if(!dst) return fail(r,"invalid destination");
+    int32_t result=read_values?read_values(values):-2;
+    if(result==0 || result==-2) memcpy(dst,values,bytes);
+    return result;
+}
+static int32_t imu_config(wasm_exec_env_t e,uint32_t rate,uint32_t mask)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_SENSOR)) return -1;
+    if(r->callback!=0 || (rate!=15 && rate!=30 && rate!=60 && rate!=120) || (mask&~7u)) return fail(r,"invalid IMU configuration");
+    if(!r->host.device || !r->host.device->imu_config) return -2;
+    int32_t result=r->host.device->imu_config(rate,mask);
+    if(!result) {
+        r->hardware_events&=~((1u<<7)|(1u<<10)|(1u<<11));
+        if(mask&1u) r->hardware_events|=1u<<7;
+        if(mask&2u) r->hardware_events|=1u<<10;
+        if(mask&4u) r->hardware_events|=1u<<11;
+    }
+    return result;
+}
+static int32_t imu_read(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_SENSOR)) return -1;
+    return device_read(r,ptr,length,7,r->host.device?r->host.device->imu_read:NULL);
+}
+static int32_t time_local(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_CLOCK)) return -1;
+    return device_read(r,ptr,length,9,r->host.device?r->host.device->time_local:NULL);
+}
+static int32_t time_subscribe(wasm_exec_env_t e,uint32_t flags)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_CLOCK)) return -1;
+    if(r->callback!=0 || flags>1) return fail(r,"invalid time subscription");
+    if(!r->host.device || !r->host.device->time_local) return -2;
+    r->hardware_events=(r->hardware_events&~(1u<<12))|(flags<<12);
+    return 0;
+}
+static int32_t battery_info(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_SYSTEM)) return -1;
+    return device_read(r,ptr,length,4,r->host.device?r->host.device->battery_info:NULL);
+}
+static int32_t display_brightness(wasm_exec_env_t e,int32_t percent)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_SYSTEM)) return -1;
+    if(percent<10 || percent>100) return fail(r,"brightness outside 10..100");
+    return r->host.device && r->host.device->display_brightness?r->host.device->display_brightness(percent):-2;
+}
+static int32_t screen_keep_on(wasm_exec_env_t e,int32_t on)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_SYSTEM)) return -1;
+    if(on!=0 && on!=1) return fail(r,"invalid keep-on flag");
+    return r->host.device && r->host.device->screen_keep_on?r->host.device->screen_keep_on(on):-2;
+}
 static int32_t debug_log(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
 {
     tinyrt_runtime_t *r=context(e);
@@ -419,8 +489,10 @@ static int32_t runtime_backend(wasm_exec_env_t e) { return context(e)->aot ? 1 :
 static NativeSymbol natives[] = {
     { "asset_read", (void *)asset_read, "(iii)i", NULL },
     { "audio_play", (void *)audio_play, "(iii)i", NULL },
+    { "battery_info", (void *)battery_info, "(ii)i", NULL },
     { "clock_interval", (void *)clock_interval, "(i)i", NULL },
     { "debug_log", (void *)debug_log, "(ii)i", NULL },
+    { "display_brightness", (void *)display_brightness, "(i)i", NULL },
     { "draw_arc", (void *)draw_arc, "(iiiiiii)i", NULL },
     { "draw_clear", (void *)draw_clear, "(i)i", NULL },
     { "draw_rect", (void *)draw_rect, "(iiiii)i", NULL },
@@ -443,17 +515,22 @@ static NativeSymbol natives[] = {
     { "gfx_tex_upload", (void *)gfx_tex_upload, "(iiiiiii)i", NULL },
     { "haptic_pulse", (void *)haptic_pulse, "(ii)i", NULL },
     { "haptic_stop", (void *)haptic_stop, "()i", NULL },
+    { "imu_config", (void *)imu_config, "(ii)i", NULL },
+    { "imu_read", (void *)imu_read, "(ii)i", NULL },
     { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL },
     { "random_u32", (void *)random_u32, "()i", NULL },
     { "runtime_backend", (void *)runtime_backend, "()i", NULL },
-    { "sys_info", (void *)sys_info, "(ii)i", NULL }
+    { "screen_keep_on", (void *)screen_keep_on, "(i)i", NULL },
+    { "sys_info", (void *)sys_info, "(ii)i", NULL },
+    { "time_local", (void *)time_local, "(ii)i", NULL },
+    { "time_subscribe", (void *)time_subscribe, "(i)i", NULL }
 };
-static const unsigned arity[] = { 3, 3, 1, 2, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 1, 2, 2, 0, 0, 0, 2 };
-static const uint32_t required_permission[] = { 0, 16, 8, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 2, 4, 4, 8, 0, 0, 0 };
-static const unsigned since_level[] = { 1, 1, 1, 2, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 1, 2 };
+static const unsigned arity[] = { 3, 3, 2, 1, 2, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 0, 2, 2, 1, 2, 2, 0, 0, 0, 1, 2, 2, 1 };
+static const uint32_t required_permission[] = { 0, 16, 256, 8, 0, 256, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 128, 128, 2, 4, 4, 8, 0, 0, 256, 0, 8, 8 };
+static const unsigned since_level[] = { 1, 1, 3, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 3, 3, 1, 1, 1, 1, 2, 1, 3, 2, 3, 3 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -505,7 +582,7 @@ static bool u32(reader_t *r, uint32_t *out)
 }
 static bool policy_valid(const tinyrt_package_policy_t *p)
 {
-    return p && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
+    return p && (p->min_api_level>=3 || !(p->permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
         && p->max_memory_pages >= 1 && p->max_memory_pages <= 16
         && p->instruction_budget >= 1 && p->instruction_budget <= 100000;
 }
@@ -863,10 +940,14 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || kind < 1 || kind > 8) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind==9 || kind > 12) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
-    if (kind != 2 && !(r->policy.permissions & TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
-    if (kind >= 3 && !(r->input_events & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
+    if(kind==7 && (r->hardware_events&(1u<<7))) {
+        if(!(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
+    } else if (kind!=2 && kind<=8 && !(r->policy.permissions&TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
+    if ((kind==10 || kind==11) && !(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
+    if (kind==12 && !(r->policy.permissions&TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
+    if (kind >= 3 && !((r->input_events|r->hardware_events) & (1u << kind))) return TINYRT_INVALID_ARGUMENT;
     if ((kind == 1 || kind == 3 || kind == 4) && (x < 0 || y < 0 || x >= r->width || y >= r->height)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 6 && (x != 1 || (y != 0 && y != 1) || arg != 0)) return TINYRT_INVALID_ARGUMENT;
     if (kind == 7 && (x < -16000 || x > 16000 || y < -16000 || y > 16000 || arg < -16000 || arg > 16000)) return TINYRT_INVALID_ARGUMENT;
@@ -916,7 +997,7 @@ uint32_t tinyrt_runtime_clock_interval_ms(const tinyrt_runtime_t *r)
 }
 uint32_t tinyrt_runtime_input_events(const tinyrt_runtime_t *r)
 {
-    return r && r->ready && !r->failed && !r->stopped ? r->input_events : 0;
+    return r && r->ready && !r->failed && !r->stopped ? (r->input_events|r->hardware_events) : 0;
 }
 const char *tinyrt_runtime_last_error(const tinyrt_runtime_t *r)
 {

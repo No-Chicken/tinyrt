@@ -1,6 +1,7 @@
 /* Desktop validation of raw Wasm. No package trust, BLE, or disk persistence. */
 #include "tinyrt_runtime.h"
 #include <errno.h>
+#include <time.h>
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -31,6 +32,24 @@ static uint32_t desktop_random(void *ctx) {
     return value;
 }
 static uint32_t now_ms_value, commits;
+static int32_t sim_imu[7]={0,0,1000,0,0,0,0};
+static int32_t sim_battery[4]={100,0,1,4200};
+static int32_t sim_brightness=80,sim_keep_on=0,sim_utc_offset=0,sim_time_valid=1;
+static int64_t sim_epoch=946684800;
+static int32_t sim_config(uint32_t hz,uint32_t mask) {(void)hz;(void)mask;return 0;}
+static int32_t sim_motion(int32_t values[7]) {memcpy(values,sim_imu,sizeof(sim_imu));return 0;}
+static int32_t sim_power(int32_t values[4]) {memcpy(values,sim_battery,sizeof(sim_battery));return 0;}
+static int32_t sim_set_brightness(int32_t pct) {sim_brightness=pct;return 0;}
+static int32_t sim_set_keep_on(int32_t on) {sim_keep_on=on;return 0;}
+static int32_t sim_datetime(int32_t values[9]) {
+    time_t local=(time_t)(sim_epoch+now_ms_value/1000+(int64_t)sim_utc_offset*60);
+    struct tm *t=gmtime(&local);
+    if(!t) return -2;
+    int32_t result[9]={t->tm_year+1900,t->tm_mon+1,t->tm_mday,t->tm_hour,t->tm_min,t->tm_sec,
+                       t->tm_wday,sim_utc_offset,sim_time_valid};
+    memcpy(values,result,sizeof(result));return sim_time_valid?0:-2;
+}
+static const tinyrt_device_api_t sim_device={sim_config,sim_motion,sim_datetime,sim_power,sim_set_brightness,sim_set_keep_on};
 static uint32_t clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 static uint64_t next_clock_deadline=UINT64_MAX;
 static tinyrt_frame_t frame;
@@ -214,7 +233,7 @@ int main(int argc, char **argv) {
     if (count!=(size_t)length || close_result) { free(bytes); return 2; }
     int exit_code=0;
     if (tinyrt_runtime_system_init()!=TINYRT_OK) { free(bytes); return 1; }
-    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL,desktop_log,desktop_random};
+    tinyrt_runtime_host_t host={NULL,get_value,set_value,now,read_resource,play_audio,NULL,NULL,desktop_log,desktop_random,&sim_device};
     tinyrt_runtime_t *rt=NULL;
     tinyrt_status_t result=tinyrt_runtime_create(bytes,(uint32_t)length,&policy,&host,&rt);
     if (result!=TINYRT_OK) { emit("create",result,"Wasm load rejected",0); exit_code=1; goto done; }
@@ -226,19 +245,45 @@ int main(int argc, char **argv) {
         if (!op) continue;
         char *a=strtok(NULL," \t\r\n"), *b=strtok(NULL," \t\r\n"), *extra=strtok(NULL," \t\r\n");
         uint32_t x=0,y=0;
-        if (!strcmp(op,"capture") && !a) {
+        if (!strcmp(op,"battery")) {
+            char *volts=strtok(NULL," \t\r\n");
+            if(!parse_range(a,0,100,&sim_battery[0]) || !parse_range(b,0,1,&sim_battery[1]) ||
+               !parse_range(extra,0,1,&sim_battery[2]) || !parse_range(volts,0,6000,&sim_battery[3]) ||
+               strtok(NULL," \t\r\n")) {exit_code=usage();break;}
+            continue;
+        } else if(!strcmp(op,"rtc")) {
+            uint32_t epoch;
+            if(!parse_u32(a,&epoch) || !parse_range(b,-840,840,&sim_utc_offset) ||
+               !parse_range(extra,0,1,&sim_time_valid) || strtok(NULL," \t\r\n")) {exit_code=usage();break;}
+            sim_epoch=(int64_t)epoch-now_ms_value/1000;
+            if(rt && sim_time_valid && (tinyrt_runtime_input_events(rt)&(1u<<12))) result=cycle(rt,"minute",0,12,0,0,0);
+        } else if(!strcmp(op,"gyro") || !strcmp(op,"gesture")) {
+            bool gyro=!strcmp(op,"gyro");
+            int32_t gx,gy,gz;
+            if(!parse_range(a,gyro?-20480:1,gyro?20480:5,&gx) ||
+               !parse_range(b,-20480,20480,&gy) || !parse_range(extra,-20480,20480,&gz) ||
+               strtok(NULL," \t\r\n")) {exit_code=usage();break;}
+            if(gyro){sim_imu[3]=gx;sim_imu[4]=gy;sim_imu[5]=gz;sim_imu[6]=(int32_t)now_ms_value;}
+            int32_t kind=gyro?10:11;
+            if(rt && (tinyrt_runtime_input_events(rt)&(1u<<kind))) result=cycle(rt,op,0,kind,gx,gy,gz);
+        } else if (!strcmp(op,"capture") && !a) {
             uint32_t count_before=frame.count;frame.count=last_frame_count;
             capture_pixels=true;emit("capture",TINYRT_OK,"",0);capture_pixels=false;frame.count=count_before;
             continue;
         } else if (!strcmp(op,"advance") && parse_u32(a,&x) && !b && rt && x<=60000 && x>=now_ms_value) {
             /* Match svc_apps event_owner: automatic delivery respects the
              * manifest. Explicit tick remains a strict runtime diagnostic. */
+            int64_t previous_minute=(sim_epoch+now_ms_value/1000)/60;
             while ((policy.permissions&TINYRT_PERMISSION_CLOCK) && next_clock_deadline<=x) {
                 now_ms_value=(uint32_t)next_clock_deadline;
                 result=cycle(rt,"tick",0,2,0,0,(int32_t)now_ms_value);
                 if (result!=TINYRT_OK) break;
             }
-            if (result==TINYRT_OK) now_ms_value=x;
+            if(result==TINYRT_OK) {
+                now_ms_value=x;
+                if(sim_time_valid && (sim_epoch+x/1000)/60!=previous_minute &&
+                   (tinyrt_runtime_input_events(rt)&(1u<<12))) result=cycle(rt,"minute",0,12,0,0,0);
+            }
         } else if (!strcmp(op,"time") && parse_u32(a,&x) && !b) {
             now_ms_value=x;
             /* Raw time is an explicit clock warp; do not later run old deadlines. */
@@ -257,7 +302,8 @@ int main(int argc, char **argv) {
         } else if (!strcmp(op,"motion")) {
             int32_t ax,ay,az;
             if (!parse_mg(a,&ax) || !parse_mg(b,&ay) || !parse_mg(extra,&az) || strtok(NULL," \t\r\n")) { exit_code=usage();break; }
-            if (rt && (!(policy.permissions&TINYRT_PERMISSION_INPUT) || !(tinyrt_runtime_input_events(rt)&128u))) continue;
+            sim_imu[0]=ax;sim_imu[1]=ay;sim_imu[2]=az;sim_imu[6]=(int32_t)now_ms_value;
+            if(rt && !(tinyrt_runtime_input_events(rt)&128u)) continue;
             result=cycle(rt,"motion",0,7,ax,ay,az);
         } else if (!strcmp(op,"gamepad")) {
             /* gamepad <buttons> <lx> <ly> <rx> <ry> <lt> <rt> <connected>，与宿主打包方式相同。 */

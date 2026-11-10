@@ -2,6 +2,17 @@
 #define TINYRT_MANAGER_H
 #include "tinyrt_runtime.h"
 typedef struct tinyrt_manager tinyrt_manager_t;
+typedef enum {
+    TINYRT_CRASH_INIT = 1, TINYRT_CRASH_EVENT, TINYRT_CRASH_RENDER, TINYRT_CRASH_STOP
+} tinyrt_crash_phase_t;
+typedef struct {
+    tinyrt_package_id_t app;
+    tinyrt_crash_phase_t phase;
+    uint32_t function_index, pc; /* UINT32_MAX when the backend supplies no trap location. */
+    char reason[161];
+} tinyrt_crash_t;
+/* Last failed guest callback, retained in RAM until replaced or manager destruction. */
+tinyrt_status_t tinyrt_manager_last_crash(const tinyrt_manager_t *manager, tinyrt_crash_t *out);
 #define TINYRT_MANAGER_SAVE_INTERVAL_MS 5000u
 typedef struct {
     void *ctx;
@@ -11,6 +22,7 @@ typedef struct {
     uint32_t (*now_ms)(void *);
     void (*debug_log)(void *,const char *app_id,const char *text,uint32_t length);
     uint32_t (*random_u32)(void *);
+    const tinyrt_device_api_t *device;
 } tinyrt_manager_storage_t;
 /* Adapter copies PCM before returning; stop discards queued/in-progress audio.
  * Adapter context outlives manager; callbacks never retain manager pointers. */

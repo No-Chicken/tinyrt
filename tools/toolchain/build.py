@@ -1,8 +1,4 @@
-"""Build a pinned Windows RISC-V wamrc from upstream WAMR and LLVM sources.
-
-Run in a Visual Studio x64 developer environment. CMake, Ninja, Git and Python
-must be installed; this script never downloads a prebuilt wamrc.
-"""
+"""Build the desktop WAMR runner or the source-pinned S31 AOT compiler."""
 from __future__ import annotations
 
 import argparse
@@ -109,6 +105,8 @@ def main() -> None:
     parser.add_argument("--jobs", type=int, default=8)
     parser.add_argument("--proxy", help="optional Git HTTPS proxy; no global Git changes")
     parser.add_argument("--resume", action="store_true", help="reuse already verified, patched sources")
+    parser.add_argument("--runner-only", action="store_true",
+                        help="build and smoke-test the native runner using the core's pinned WAMR submodule")
     parser.add_argument("--source-lock", type=Path, default=ROOT / "source-lock-esp32s31.json")
     parser.add_argument("--riscv", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -124,6 +122,28 @@ def main() -> None:
             parser.error(f"{tool} is missing from PATH")
     work = args.work.resolve()
     work.mkdir(parents=True, exist_ok=True)
+    if args.runner_only:
+        core = ROOT.parents[1]
+        build_dir = work / "runner-build"
+        configure = ["cmake", "-S", str(core), "-B", str(build_dir), "-G", "Ninja",
+                     "-DCMAKE_BUILD_TYPE=Release"]
+        if os.name == "nt":
+            configure.append("-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded")
+        invoke(configure, log=work / "configure-runner.log")
+        invoke(["cmake", "--build", str(build_dir), "--target", "tinyrt-run", "--parallel", str(args.jobs)],
+               log=work / "build-runner.log")
+        runner = build_dir / ("tinyrt-run.exe" if os.name == "nt" else "tinyrt-run")
+        fixture = core / "tests/fixtures/guests/color.wasm"
+        result = subprocess.run([str(runner), str(fixture), "--permissions", "3"],
+                                input="pointer 1 100 100\n", capture_output=True, text=True, check=True)
+        frames = [json.loads(line) for line in result.stdout.splitlines()]
+        if (not frames or not all(frame["status"] == 0 for frame in frames) or
+                [(f["phase"], f["frame"][0]["rgb"]) for f in frames if f["phase"] in ("init", "pointer")]
+                != [("init", 0x386641), ("pointer", 0x9e2a2b)]):
+            raise RuntimeError("runner failed the frozen color guest smoke test")
+        print(json.dumps({"runner": str(runner), "size": runner.stat().st_size, "sha256": digest(runner),
+                          "system": host_platform, "architecture": host_target, "fixture_sha256": digest(fixture)}))
+        return
     lock_path = args.source_lock.resolve()
     lock = json.loads(lock_path.read_text(encoding="utf-8"))
     git = ["git"]

@@ -1,7 +1,6 @@
 # Optional RGB565, skipped render and clock interval
 
-These are additional optional imports in module `tinyrt`, preserving ABI 1 and
-its 100,000-instruction callback ceiling. A guest using them requires a core
+These optional imports belong to ABI 1, module `tinyrt`. The interpreter callback budget is at most 100,000 instructions for API Levels 1–3 and 125,000 at Level 4. A guest using them requires a core
 revision that implements them; older hosts reject unknown imports. Existing
 guests need no changes. The authoritative signatures are in `contracts`.
 
@@ -13,17 +12,16 @@ height 1..240, coordinates are nonnegative, and the complete rectangle must fit
 the initialized viewport. Length must be exactly `w*h*2`, at most 122,880 bytes.
 Dimensions are bounded before multiplication. The entire guest address range
 is checked before copying. Bytes are packed RGB565 little-endian, without
-scaling or a stride. A frame permits one image and still starts with draw_clear;
-all drawing shares the existing 128-command limit.
+scaling or a stride. An immediate frame starts with draw_clear. API Levels 1–3 allow one image and 128 commands per frame. Level 4 allows two images and 144 commands. The combined pixel payload is capped at 122,880 bytes at every level.
 
-Command kind 7 stores x/y/w/h. `tinyrt_frame_t` owns `pixel_bytes` and
+Command kind 7 stores x/y/w/h and the byte offset of its image in the frame payload. `tinyrt_frame_t` owns `pixel_bytes` and
 `pixels[122880]`; no guest pointer crosses the runtime boundary. Guest changes
 after the import cannot alter the host copy. Rendering resets count and, when
 the first command is emitted, pixel_bytes. Each emitted command is initialized;
 unused command slots and the pixel payload tail are left untouched.
 `pixel_bytes` is authoritative for a drawn frame; bytes after it are unused.
 
-The C frame includes 128 command records and the owned maximum pixel payload;
+The C frame includes 144 command records and the owned maximum pixel payload;
 allocate it using `sizeof(tinyrt_frame_t)` from the current host header. Runtime and manager
 write directly into caller-owned, exclusively writable, unpublished storage;
 neither owns an intermediate frame or retains the output pointer after the call.

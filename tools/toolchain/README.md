@@ -1,8 +1,8 @@
 # 固定版本 AOT 工具链
 
-`source-lock-esp32s31.json` 固定 WAMR、Espressif LLVM 和补丁顺序。`build.py` 从这些源码构建 Windows 主机 `wamrc.exe`；不下载预编译 wamrc。运行库必须使用同一 WAMR commit 和对应运行库补丁。
+`source-lock-esp32s31.json` 固定 WAMR、Espressif LLVM 和补丁顺序。`build.py` 从这些源码构建 Windows、Linux 或 macOS 主机的 wamrc。`--runner-only` 单独构建本机 runner，并用固定的 color guest 验证。运行库必须使用同一 WAMR commit 和对应运行库补丁。
 
-在 Visual Studio x64 Developer Command Prompt 中，将 CMake、Ninja、Git 和 Python 加入 PATH 后执行：
+构建需要 CMake、Ninja、Git、Python 和本机 C/C++ 编译器。Windows 使用 Visual Studio x64 Developer Command Prompt，macOS 使用带 SDK 的 Xcode Command Line Tools。
 
 ```bat
 chcp 65001
@@ -11,7 +11,7 @@ python esp32/tinyrt/tools/toolchain/build.py --work tmp/aot-toolchain --jobs 8
 
 构建中断后可加 `--resume`。脚本用临时 Git index 对比完整源码和固定补丁，不接受额外源码修改。`--proxy` 只为本次 Git 命令设置代理，不改全局配置。建议预留 5 GB 磁盘和 16 GB 内存；降低 `--jobs` 可减少内存峰值。
 
-输出包括 `wamrc-build-riscv/wamrc.exe`、`provenance-riscv.json`、构建日志和许可证。清单记录源码 commit、补丁 SHA-256、编译器 SHA-256、实际主机构建工具及编译参数。`target_options_sha256` 是参数数组经 UTF-8 紧凑 JSON 序列化后的 SHA-256，数组顺序参与计算。
+输出包括 `wamrc-build-riscv/wamrc`（Windows 为 `wamrc.exe`）、`provenance-riscv.json`、构建日志和许可证。清单记录源码 commit、补丁 SHA-256、编译器 SHA-256、实际主机构建工具及编译参数。`target_options_sha256` 是参数数组经 UTF-8 紧凑 JSON 序列化后的 SHA-256，数组顺序参与计算。
 
 ```bat
 python esp32/tinyrt/tools/toolchain/test_loop_poll.py --wamrc tmp/aot-toolchain/wamrc-build-riscv/wamrc.exe --output tmp/aot-verification --example path/to/nes-maze.wasm --objdump path/to/riscv32-esp-elf-objdump.exe
@@ -28,3 +28,16 @@ python esp32/tinyrt/tools/toolchain/compile_fixtures.py --wamrc tmp/aot-toolchai
 编译参数和元数据只是可信编译链的一部分。产物需要经过运行库加载和板上安全矩阵验证，才能作为发布产物。
 
 依赖许可证与原始版权声明保留在源码及构建输出的 `licenses/`；除顶层许可证外，脚本保留 WAMR core/compiler、LLVM include/lib 中的单独声明文件和带版权信息的原始源码头，覆盖 LLVM Support 的 xxhash、Unicode 转换及 BSD 正则表达式声明。该目录采用保守范围，可能包含本次构建未链接的源码声明；各输出文件的 SHA-256 记录在 provenance 中。本地修改由固定补丁明确记录。
+
+## 桌面 runner
+
+在 core 仓库根目录初始化固定 WAMR 子模块后运行以下命令。runner 构建独立于 LLVM 构建。
+
+```sh
+git submodule update --init third_party/wamr
+python tools/toolchain/build.py --runner-only --work build-tools --jobs 4
+```
+
+脚本执行冻结的 color guest，核对初始帧和触摸后的颜色，并打印 runner 的绝对路径、字节数和 SHA-256。将路径传入 SDK 的 `--runner` 或 `TINYRT_RUNNER`。Windows 发布版本使用静态 CRT。
+
+构建新平台的 wamrc 后，保留源码及补丁检查、provenance 和许可证，并按上面的 loop-poll、fixtures 和板上安全矩阵验证其输出。SDK 对发布的 wamrc 执行 SHA-256 校验。Windows、Linux 和 macOS 的本机构建各有独立的二进制哈希。

@@ -54,6 +54,13 @@ class Features(unittest.TestCase):
         self.assertEqual(self.run_tool().returncode, 0)
         self.assertEqual(first, self.csv.read_bytes())
 
+    def test_pitch_at_lower_limit(self):
+        for hz in (80, 83.5):
+            frames = self.frames(lambda i: 8000 * math.sin(i * math.tau * hz / 16000), 18)
+            for frame in frames[5:]:
+                self.assertAlmostEqual(frame['pitch_hz_q4'] / 16, hz, delta=1)
+                self.assertGreater(frame['pitch_conf_q15'], .9 * 32768)
+
     def test_saw_noise_clipping_and_cross_frame_zcr(self):
         saw = self.frames(lambda i: ((i * 220 / 16000) % 1 - .5) * 8192)[-1]
         self.assertAlmostEqual(saw['pitch_hz_q4'] / 16, 220, delta=2)

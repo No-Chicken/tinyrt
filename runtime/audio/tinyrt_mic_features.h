@@ -22,8 +22,10 @@
 #define TINYRT_MIC_BANDS_MIN_DB (-80.0f)
 #define TINYRT_MIC_PITCH_MIN_DB (-55.0f)
 #define TINYRT_MIC_FFT 512
-#define TINYRT_MIC_YIN_MIN 16
-#define TINYRT_MIC_YIN_MAX 200
+/* Pitch uses 2:1 filtered decimation; the FFT and level path stay at 16 kHz. */
+#define TINYRT_MIC_YIN_RATE (TINYRT_MIC_RATE/2)
+#define TINYRT_MIC_YIN_MIN (TINYRT_MIC_YIN_RATE/1000)
+#define TINYRT_MIC_YIN_MAX (TINYRT_MIC_YIN_RATE/80)
 #define TINYRT_MIC_YIN_THRESHOLD 0.15f
 
 typedef struct tinyrt_mic_fx tinyrt_mic_fx_t;

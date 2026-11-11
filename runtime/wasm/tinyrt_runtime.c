@@ -122,12 +122,12 @@ struct tinyrt_runtime {
     char error[192];
 };
 
-static bool utf8(const uint8_t *p, uint32_t n)
+static bool utf8(const uint8_t *p, uint32_t n, bool allow_controls)
 {
     uint32_t i = 0;
     while (i < n) {
         uint32_t c = p[i++], trailing = 0, minimum = 0;
-        if (c < 0x80) { if (c < 0x20 || c == 0x7f) return false; continue; }
+        if (c < 0x80) { if (!allow_controls && (c < 0x20 || c == 0x7f)) return false; continue; }
         if (c >= 0xc2 && c <= 0xdf) { c &= 31; trailing = 1; minimum = 0x80; }
         else if (c >= 0xe0 && c <= 0xef) { c &= 15; trailing = 2; minimum = 0x800; }
         else if (c >= 0xf0 && c <= 0xf4) { c &= 7; trailing = 3; minimum = 0x10000; }
@@ -201,7 +201,7 @@ static int32_t draw_text(wasm_exec_env_t e, int32_t x, int32_t y, uint32_t ptr, 
         return fail(r, "text bounds or length invalid");
     if (!wasm_runtime_validate_app_addr(r->instance, ptr, len)) return fail(r, "text memory out of bounds");
     const uint8_t *p = wasm_runtime_addr_app_to_native(r->instance, ptr);
-    if (!p || !utf8(p, len)) return fail(r, "text is not displayable UTF-8");
+    if (!p || !utf8(p, len, false)) return fail(r, "text is not displayable UTF-8");
     tinyrt_draw_command_t *c = command(r, TINYRT_DRAW_TEXT);
     if (!c) return -1;
     c->x = x; c->y = y; c->rgb = rgb & 0xffffff;
@@ -247,7 +247,7 @@ static int32_t draw_text_box(wasm_exec_env_t e, int32_t x, int32_t y, int32_t w,
         return fail(r, "text box bounds or style invalid");
     if (!wasm_runtime_validate_app_addr(r->instance,ptr,len)) return fail(r,"text memory out of bounds");
     const uint8_t *p = wasm_runtime_addr_app_to_native(r->instance,ptr);
-    if (!p || !utf8(p,len)) return fail(r,"text is not displayable UTF-8");
+    if (!p || !utf8(p,len,false)) return fail(r,"text is not displayable UTF-8");
     tinyrt_draw_command_t *c = command(r,TINYRT_DRAW_TEXT_BOX);
     if (!c) return -1;
     c->x=x; c->y=y; c->w=w; c->h=h; c->font_px=font; c->align=align; c->rgb=rgb & 0xffffff;
@@ -629,7 +629,7 @@ static int32_t debug_log(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
     if(!r->host.debug_log || !r->host.now_ms || !length || length>128 ||
        !wasm_runtime_validate_app_addr(r->instance,ptr,length)) return 0;
     const uint8_t *text=wasm_runtime_addr_app_to_native(r->instance,ptr);
-    if(!text || !utf8(text,length)) return 0;
+    if(!text || !utf8(text,length,true)) return 0;
     uint32_t now=r->host.now_ms(r->host.ctx);
     if(now-r->log_since_ms>=1000) {r->log_since_ms=now;r->log_count=0;}
     if(r->log_count>=50) {++r->log_dropped;return 0;}

@@ -118,13 +118,24 @@ static void spectrum(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
  * Stop once the first below-threshold trough and its right neighbor are known. */
 static void pitch(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
 {
+    /* Seven-tap binomial low-pass, followed by decimation to 8 kHz.
+     * Take only valid convolutions from the 512-sample analysis window.
+     * FFT output is no longer needed, so the filtered signal reuses its RAM. */
+    const unsigned samples=(N-7)/2+1;
+    float *filtered=fx->re;
+    for(unsigned i=0;i<samples;i++) {
+        const float *s=fx->window+2*i;
+        float pair=fmaf(6.0f,s[1]+s[5],s[0]+s[6]);
+        pair=fmaf(15.0f,s[2]+s[4],pair);
+        filtered[i]=fmaf(20.0f,s[3],pair)*(1.0f/64.0f);
+    }
     float sum=0;
     fx->yin[0]=1;
     unsigned best=0;
     for(unsigned lag=1;lag<=TINYRT_MIC_YIN_MAX;lag++) {
         float d=0;
-        for(unsigned i=0;i<N-TINYRT_MIC_YIN_MAX;i++) {
-            float delta=fx->window[i]-fx->window[i+lag];
+        for(unsigned i=0;i<samples-TINYRT_MIC_YIN_MAX;i++) {
+            float delta=filtered[i]-filtered[i+lag];
             d=fmaf(delta,delta,d);
         }
         sum+=d;
@@ -142,7 +153,7 @@ static void pitch(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
         if(curvature>0) period+=0.5f*(left-right)/curvature;
     }
     period=fmaxf(TINYRT_MIC_YIN_MIN,fminf(period,TINYRT_MIC_YIN_MAX));
-    out->pitch_hz_q4=(uint16_t)lroundf(TINYRT_MIC_RATE*16/period);
+    out->pitch_hz_q4=(uint16_t)lroundf(TINYRT_MIC_YIN_RATE*16/period);
     out->pitch_conf_q15=(uint16_t)lroundf((1-fx->yin[best])*32767);
 }
 

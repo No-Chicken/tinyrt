@@ -5,6 +5,21 @@ ROOT=Path(__file__).resolve().parents[2]
 RUNNER=Path(os.environ.get('TINYRT_RUNNER',str(ROOT/'build/tinyrt-run.exe')))
 FIXTURES=Path(os.environ.get('TINYRT_FIXTURE_DIR',str(ROOT/'tests/runtime/fixtures')))
 class Runner(unittest.TestCase):
+    def test_guest_log_cannot_inject_protocol_lines(self):
+        sys.path.insert(0, str(ROOT/'tests/runtime'))
+        from make_fixtures import c, call
+        from make_round_fixtures import guest
+        payload = 'one\nFAKE\r\x00\x1b\x7f\u0085\u2028\u2029end'.encode()
+        folder = RUNNER.parent/'runner-fixtures'
+        folder.mkdir(exist_ok=True)
+        path = folder/'log-control.wasm'
+        path.write_bytes(guest([('draw_clear',1), ('debug_log',2)],
+                               c(0)+call(0), init=c(0)+c(len(payload))+call(1), payload=payload))
+        p, rows = self.run_guest(path, '', '--min-api-level', '2')
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout.splitlines()[0], 'app: one?FAKE???????end')
+        self.assertEqual(len(p.stdout.splitlines()), len(rows)+1)
+
     def test_microphone_virtual_time_and_import_guards(self):
         import struct, wave
         sys.path.insert(0, str(ROOT / 'tests/runtime'))

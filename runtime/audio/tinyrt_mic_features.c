@@ -123,12 +123,17 @@ static void pitch(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
      * FFT output is no longer needed, so the filtered signal reuses its RAM. */
     const unsigned samples=(N-7)/2+1;
     float *filtered=fx->re;
+    float filtered_energy=0;
     for(unsigned i=0;i<samples;i++) {
         const float *s=fx->window+2*i;
         float pair=fmaf(6.0f,s[1]+s[5],s[0]+s[6]);
         pair=fmaf(15.0f,s[2]+s[4],pair);
         filtered[i]=fmaf(20.0f,s[3],pair)*(1.0f/64.0f);
+        filtered_energy=fmaf(filtered[i],filtered[i],filtered_energy);
     }
+    /* Normalization alone can turn an inaudible high-frequency alias into
+     * a confident note. Measure remaining signal in the pitch channel. */
+    if(filtered_energy<samples*TINYRT_MIC_YIN_QUIET_POWER) return;
     float sum=0;
     fx->yin[0]=1;
     unsigned best=0;

@@ -634,7 +634,21 @@ static int32_t debug_log(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
     if(now-r->log_since_ms>=1000) {r->log_since_ms=now;r->log_count=0;}
     if(r->log_count>=50) {++r->log_dropped;return 0;}
     ++r->log_count;
-    r->host.debug_log(r->host.ctx,(const char *)text,length);
+    /* Every adapter receives exactly one bounded line of valid UTF-8.
+     * Remove C0, DEL, C1, and the Unicode line and paragraph separators. */
+    char line[129];
+    uint32_t used=0;
+    for(uint32_t i=0;i<length;i++) {
+        uint8_t c=text[i];
+        if(c==0xc2 && i+1<length && text[i+1]<=0x9f) {
+            i++; line[used++]='?';
+        } else if(c==0xe2 && i+2<length && text[i+1]==0x80 &&
+                  (text[i+2]==0xa8 || text[i+2]==0xa9)) {
+            i+=2; line[used++]='?';
+        } else line[used++]=c<0x20 || c==0x7f ? '?' : (char)c;
+    }
+    line[used]='\0';
+    r->host.debug_log(r->host.ctx,line,used);
     return 0;
 }
 static uint32_t random_u32(wasm_exec_env_t e)

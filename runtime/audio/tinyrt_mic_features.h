@@ -26,6 +26,8 @@
 #define TINYRT_MIC_YIN_RATE (TINYRT_MIC_RATE/2)
 #define TINYRT_MIC_YIN_MIN (TINYRT_MIC_YIN_RATE/1000)
 #define TINYRT_MIC_YIN_MAX (TINYRT_MIC_YIN_RATE/80)
+/* Mean square of a -65 dBFS signal in PCM16 units, below the -55 dBFS gate. */
+#define TINYRT_MIC_YIN_QUIET_POWER 339.55f
 #define TINYRT_MIC_YIN_THRESHOLD 0.15f
 
 typedef struct tinyrt_mic_fx tinyrt_mic_fx_t;

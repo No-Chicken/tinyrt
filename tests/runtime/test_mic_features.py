@@ -54,6 +54,10 @@ class Features(unittest.TestCase):
         self.assertEqual(self.run_tool().returncode, 0)
         self.assertEqual(first, self.csv.read_bytes())
 
+    def test_decimation_rejects_high_frequency_alias(self):
+        frames = self.frames(lambda i: 8000 * math.sin(i * math.tau * 7500 / 16000), 18)
+        self.assertTrue(all(f['pitch_hz_q4'] == 0 and f['pitch_conf_q15'] == 0 for f in frames[5:]))
+
     def test_pitch_at_lower_limit(self):
         for hz in (80, 83.5):
             frames = self.frames(lambda i: 8000 * math.sin(i * math.tau * hz / 16000), 18)

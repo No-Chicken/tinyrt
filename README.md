@@ -35,6 +35,14 @@ project after setting WAMR_ROOT_DIR. It exposes `tinyrt_wamr` and
 The root `tinyrt-run` executable validates raw Wasm and accepts bounded stdin
 events. Its output is host validation, not device acceptance.
 
+`tinyrt-run app.wasm --min-api-level 3 --permissions 77 --mic input.wav`
+replays mono 16 kHz PCM16 at the runner's virtual time (WAV sample zero is
+time zero). A missing `--mic` makes `mic_open` return -2. Use `advance` to
+deliver samples and subscribed level events, or `mic_level peak rms flags`
+for explicit level input. `tinyrt-mic-features input.wav output.csv` runs the
+firmware's feature extractor on each complete 160-sample frame. The CSV's
+integer columns use the units in `tinyrt_mic_frame_t` without rescaling.
+
 ## Repository boundaries
 
 `contracts/guest-v1.h` and JSON contracts are authoritative. The SDK generates

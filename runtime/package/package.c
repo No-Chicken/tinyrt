@@ -177,7 +177,7 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     if(!parse_header(header,length,&m)) return TINYRT_VERIFY_FAILED;
     if(m.policy.min_api_level>TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     if(m.policy.min_api_level<4 && (m.policy.permissions&TINYRT_PERMISSION_ACCESSORY)) return TINYRT_VERIFY_FAILED;
-    if(m.policy.min_api_level<3 && (m.policy.permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) return TINYRT_VERIFY_FAILED;
+    if(m.policy.min_api_level<3 && (m.policy.permissions&(TINYRT_PERMISSION_MIC|TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) return TINYRT_VERIFY_FAILED;
     r=parse_sections(io,off,length,get32(header+20),&m);
     if(r!=TINYRT_OK) return r;
     m.execution_kind=TINYRT_PACKAGE_EXEC_WASM;

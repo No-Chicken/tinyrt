@@ -1,5 +1,6 @@
 /* Desktop validation of raw Wasm. No package trust, BLE, or disk persistence. */
 #include "tinyrt_runtime.h"
+#include "mic_replay.h"
 #include <errno.h>
 #include <time.h>
 #include <inttypes.h>
@@ -62,9 +63,11 @@ static int32_t sim_write_audio(const void *pcm,uint32_t len) {
     (void)pcm;uint32_t room=(uint32_t)sim_queue_free();
     if(!room)return -2;
     if(len>room)len=room;
-    sim_audio_bytes+=len;return (int32_t)len;
+    sim_audio_bytes+=len;
+    mic_replay_playback(now_ms_value,(sim_audio_bytes+31)/32);
+    return (int32_t)len;
 }
-static int32_t sim_tone(uint32_t freq,uint32_t ms) {(void)freq;(void)ms;return 0;}
+static int32_t sim_tone(uint32_t freq,uint32_t ms) {(void)freq;mic_replay_playback(now_ms_value,ms);return 0;}
 static int32_t sim_pattern(const uint16_t *steps,uint32_t count) {(void)steps;(void)count;return 0;}
 static int32_t sim_blob_read(void *ctx,void *dst,uint32_t size) {
     (void)ctx;if(size<saved.blob_len)return -2;
@@ -78,11 +81,17 @@ static int32_t sim_blob_write(void *ctx,const void *src,uint32_t size) {
 }
 static int32_t sim_acc_send(uint32_t type,const void *src,uint32_t size) {(void)type;(void)src;(void)size;return -2;}
 static int32_t sim_acc_read(void *dst,uint32_t size) {(void)dst;(void)size;return -2;}
+static int32_t sim_mic_open(uint32_t rate,uint32_t flags) {
+    (void)rate; return mic_replay_open(now_ms_value,flags);
+}
+static int32_t sim_mic_gain(int32_t db) {return mic_replay_gain(now_ms_value,db);}
 static const tinyrt_device_api_t sim_device={
     .imu_config=sim_config,.imu_read=sim_motion,.time_local=sim_datetime,.battery_info=sim_power,
     .display_brightness=sim_set_brightness,.screen_keep_on=sim_set_keep_on,.audio_write=sim_write_audio,
     .audio_queue_free=sim_queue_free,.audio_tone=sim_tone,.haptic_pattern=sim_pattern,
-    .acc_send=sim_acc_send,.acc_read=sim_acc_read
+    .acc_send=sim_acc_send,.acc_read=sim_acc_read,
+    .mic_open=sim_mic_open,.mic_close=mic_replay_close,.mic_gain=sim_mic_gain,
+    .mic_read=mic_replay_pcm,.mic_features=mic_replay_features
 };
 static uint32_t clock_interval_value=TINYRT_DEFAULT_CLOCK_INTERVAL_MS;
 static uint64_t next_clock_deadline=UINT64_MAX;
@@ -101,8 +110,10 @@ static tinyrt_status_t read_resource(void *ctx,uint32_t off,void *out,uint32_t l
 }
 /* Desktop preview validates audio resource ranges but intentionally stays silent. */
 static tinyrt_status_t play_audio(void *ctx,uint32_t offset,uint32_t length,uint32_t rate) {
-    (void)ctx;(void)rate;
-    return offset>resources_size || length>resources_size-offset ? TINYRT_INVALID_ARGUMENT : TINYRT_OK;
+    (void)ctx;
+    if(offset>resources_size || length>resources_size-offset) return TINYRT_INVALID_ARGUMENT;
+    mic_replay_playback(now_ms_value,(length/2*1000+rate-1)/rate);
+    return TINYRT_OK;
 }
 static double milliseconds(void) {
 #ifdef _WIN32
@@ -216,6 +227,19 @@ static tinyrt_status_t cycle(tinyrt_runtime_t *rt, const char *phase, int init,
     emit(phase,result,result==TINYRT_OK ? "" : tinyrt_runtime_last_error(rt),milliseconds()-start);
     return result;
 }
+static tinyrt_status_t advance_mic(tinyrt_runtime_t *rt,uint32_t target)
+{
+    mic_level_t level;
+    int result;
+    while((result=mic_replay_advance(target,&level))>0) {
+        now_ms_value=level.t_ms;
+        tinyrt_status_t status=cycle(rt,"mic_level",0,TINYRT_EV_MIC_LEVEL,level.peak,level.rms,level.flags);
+        if(status!=TINYRT_OK) return status;
+    }
+    now_ms_value=target;
+    return result<0?TINYRT_VERIFY_FAILED:TINYRT_OK;
+}
+
 static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
     saved_t before=saved; double start=milliseconds(); char error[192]="";
     tinyrt_status_t result=*rt ? tinyrt_runtime_stop(*rt) : TINYRT_OK;
@@ -231,8 +255,9 @@ static tinyrt_status_t stop_instance(tinyrt_runtime_t **rt, const char *phase) {
     return result;
 }
 static int usage(void) {
-    fprintf(stderr,"Usage: tinyrt-run app.wasm [--min-api-level level] [--pages pages] [--budget instructions] [--permissions mask] [--assets resources.bin]\n"
+    fprintf(stderr,"Usage: tinyrt-run app.wasm [--min-api-level level] [--pages pages] [--budget instructions] [--permissions mask] [--assets resources.bin] [--mic input.wav]\n"
         "stdin: advance <0..60000_ms> | capture | pointer <kind> <x> <y> | key 1 <0|1> | motion <ax_mg> <ay_mg> <az_mg>\n"
+        "       mic_level <peak> <rms> <flags>\n"
         "       gamepad <buttons> <lx> <ly> <rx> <ry> <lt> <rt> <connected 0|1>\n"
         "       time <uint32_ms> | tick <uint32_ms> | touch <x> <y> | stop | restart | reboot\n"
         "advance uses the guest clock interval and monotonic virtual time; capture does not run callbacks.\n"
@@ -244,6 +269,12 @@ int main(int argc, char **argv) {
     tinyrt_package_policy_t policy={1,15,2,100000,1};
     for (int i=2;i<argc;i+=2) {
         uint32_t value;
+        if(i+1<argc && !strcmp(argv[i],"--mic")) {
+            if(!mic_replay_file(argv[i+1])) {
+                fprintf(stderr,"Expected a single valid 16000 Hz mono PCM16 WAV\n"); return 2;
+            }
+            continue;
+        }
         if(i+1<argc && !strcmp(argv[i],"--assets")) {
             FILE *asset=fopen(argv[i+1],"rb");
             if(!asset)return 2;
@@ -298,6 +329,12 @@ int main(int argc, char **argv) {
                !parse_range(extra,0,1,&sim_time_valid) || strtok(NULL," \t\r\n")) {exit_code=usage();break;}
             sim_epoch=(int64_t)epoch-now_ms_value/1000;
             if(rt && sim_time_valid && (tinyrt_runtime_input_events(rt)&(1u<<12))) result=cycle(rt,"minute",0,12,0,0,0);
+        } else if(!strcmp(op,"mic_level")) {
+            int32_t peak,rms,flags;
+            if(!parse_range(a,0,32767,&peak) || !parse_range(b,0,32767,&rms) ||
+               !parse_range(extra,0,65535,&flags) || strtok(NULL," \t\r\n")) {exit_code=usage();break;}
+            if(rt && (tinyrt_runtime_input_events(rt)&(1u<<TINYRT_EV_MIC_LEVEL)))
+                result=cycle(rt,op,0,TINYRT_EV_MIC_LEVEL,peak,rms,flags);
         } else if(!strcmp(op,"gyro") || !strcmp(op,"gesture")) {
             bool gyro=!strcmp(op,"gyro");
             int32_t gx,gy,gz;
@@ -316,16 +353,18 @@ int main(int argc, char **argv) {
              * manifest. Explicit tick remains a strict runtime diagnostic. */
             int64_t previous_minute=(sim_epoch+now_ms_value/1000)/60;
             while ((policy.permissions&TINYRT_PERMISSION_CLOCK) && next_clock_deadline<=x) {
-                now_ms_value=(uint32_t)next_clock_deadline;
+                result=advance_mic(rt,(uint32_t)next_clock_deadline);
+                if(result!=TINYRT_OK) break;
                 result=cycle(rt,"tick",0,2,0,0,(int32_t)now_ms_value);
                 if (result!=TINYRT_OK) break;
             }
+            if(result==TINYRT_OK) result=advance_mic(rt,x);
             if(result==TINYRT_OK) {
-                now_ms_value=x;
                 if(sim_time_valid && (sim_epoch+x/1000)/60!=previous_minute &&
                    (tinyrt_runtime_input_events(rt)&(1u<<12))) result=cycle(rt,"minute",0,12,0,0,0);
             }
         } else if (!strcmp(op,"time") && parse_u32(a,&x) && !b) {
+            if(mic_replay_advance(x,NULL)<0) {exit_code=1;break;}
             now_ms_value=x;
             /* Raw time is an explicit clock warp; do not later run old deadlines. */
             next_clock_deadline=rt ? (uint64_t)x+clock_interval_value : UINT64_MAX;
@@ -360,7 +399,9 @@ int main(int argc, char **argv) {
             int32_t sticks=(int32_t)((uint32_t)(uint8_t)v[0]|(uint32_t)(uint8_t)v[1]<<8|(uint32_t)(uint8_t)v[2]<<16|(uint32_t)(uint8_t)v[3]<<24);
             result=cycle(rt,"gamepad",0,8,(int32_t)buttons,sticks,v[4]|v[5]<<8|v[6]<<16);
         } else if (!strcmp(op,"tick") && parse_u32(a,&x) && !b) {
-            now_ms_value=x; int32_t signed_now; memcpy(&signed_now,&x,sizeof(x));
+            result=advance_mic(rt,x);
+            if(result!=TINYRT_OK) {exit_code=1;break;}
+            int32_t signed_now; memcpy(&signed_now,&x,sizeof(x));
             result=cycle(rt,"tick",0,2,0,0,signed_now);
         } else if (!strcmp(op,"touch") && parse_u32(a,&x) && parse_u32(b,&y) && !extra && x<466 && y<466) {
             result=cycle(rt,"touch",0,1,(int32_t)x,(int32_t)y,0);
@@ -380,7 +421,7 @@ int main(int argc, char **argv) {
     if (ferror(stdin)) exit_code=2;
 done:
     if (!exit_code && rt && stop_instance(&rt,NULL)!=TINYRT_OK) exit_code=1;
-    tinyrt_runtime_destroy(rt); tinyrt_runtime_system_shutdown(); free(bytes);free(resources);
+    tinyrt_runtime_destroy(rt); tinyrt_runtime_system_shutdown(); mic_replay_shutdown(); free(bytes);free(resources);
     if (tinyrt_runtime_memory_used()) exit_code=1;
     emit("shutdown",TINYRT_OK,"",0);
     return exit_code;

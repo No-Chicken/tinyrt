@@ -553,7 +553,7 @@ tinyrt_status_t tinyrt_manager_start(tinyrt_manager_t *m, const tinyrt_package_i
     if (!module)
         return TINYRT_NO_MEMORY;
     r = tinyrt_store_read(m->store, id, module_offset, module, module_size);
-    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL,m->storage.device,host_blob_read,host_blob_write};
+    tinyrt_runtime_host_t host = {m, host_get, host_set, host_now, host_resource, host_audio, host_haptic_pulse, host_haptic_stop,host_log,m->storage.random_u32?host_random:NULL,m->storage.device,host_blob_read,host_blob_write,m->storage.kv_keys};
     m->resource_offset=meta.assets_offset;m->resource_size=meta.assets_size;
     if (r == TINYRT_OK) {
         if(aot) {

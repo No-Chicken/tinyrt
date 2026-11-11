@@ -23,6 +23,14 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(spec['haptic']['max_duration_ms'],2000)
         self.assertEqual(spec['haptic']['stages'],['init','event'])
 
+    def test_microphone_abi(self):
+        spec = json.loads((ROOT / 'contracts/abi-v1.json').read_bytes())
+        self.assertEqual(spec['permissions'].get('MIC'), {'value': 64, 'since_level': 3})
+        self.assertEqual(spec['events']['TINYRT_EV_MIC_LEVEL']['value'], 9)
+        imports = [i for i in spec['imports'] if i['name'].startswith('mic_')]
+        self.assertEqual([i['name'] for i in imports], ['mic_close', 'mic_features', 'mic_gain', 'mic_open', 'mic_read'])
+        self.assertTrue(all(i['permission'] == 64 and i['since_level'] == 3 for i in imports))
+
     def test_bounded_audio_contract(self):
         spec=json.loads((ROOT/'contracts/abi-v1.json').read_text(encoding='utf-8'))
         self.assertIn({'name':'audio_play','signature':'(iii)i','permission':16,'since_level':1},spec['imports'])

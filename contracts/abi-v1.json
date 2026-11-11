@@ -106,7 +106,7 @@
         "stop"
       ],
       "limits": "一个应用一块 / one blob per app, 0..2048 bytes",
-      "errors": "字节数，0 空 / bytes read, 0 if empty；−2 缓冲区过小、不支持或超限，无复制 / short buffer, unavailable or over limit, no copy；−1 存储失败 / storage failure"
+      "errors": "字节数，0 空 / bytes read, 0 if empty；−2 目标空间不足或不可用 / insufficient capacity or unavailable；−1 参数超限或存储失败 / over limit or storage failure"
     },
     {
       "name": "blob_write",
@@ -120,7 +120,7 @@
         "stop"
       ],
       "limits": "0..2048 bytes, 0 清空 / empty clears",
-      "errors": "写入字节数 / bytes written；−2 不可用或超限 / unavailable or over limit；−1 存储失败 / storage failure"
+      "errors": "写入字节数 / bytes written；−2 不可用 / unavailable；−1 参数超限或存储失败 / over limit or storage failure"
     },
     {
       "name": "clock_interval",
@@ -344,6 +344,64 @@
       "since_level": 1
     },
     {
+      "name": "mic_close",
+      "signature": "()i",
+      "permission": 64,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "Release capture and discard buffered input.",
+      "errors": "0 closed (also when already closed); -2 unavailable."
+    },
+    {
+      "name": "mic_features",
+      "signature": "(ii)i",
+      "permission": 64,
+      "since_level": 3,
+      "stages": [
+        "event"
+      ],
+      "limits": "FEATURES flag required; 0..4096 bytes, multiple of 32.",
+      "errors": "Bytes read, 0 if empty; -2 unavailable; invalid use traps."
+    },
+    {
+      "name": "mic_gain",
+      "signature": "(i)i",
+      "permission": 64,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "Open microphone, 0..42 dB rounded down to 6 dB steps.",
+      "errors": "Effective dB; -2 unavailable; invalid use traps."
+    },
+    {
+      "name": "mic_open",
+      "signature": "(ii)i",
+      "permission": 64,
+      "since_level": 3,
+      "stages": [
+        "init",
+        "event"
+      ],
+      "limits": "16000 Hz mono, flags PCM=1, LEVEL=2, FEATURES=4; at least one.",
+      "errors": "0 opened, 1 busy, -2 unavailable; invalid use traps."
+    },
+    {
+      "name": "mic_read",
+      "signature": "(ii)i",
+      "permission": 64,
+      "since_level": 3,
+      "stages": [
+        "event"
+      ],
+      "limits": "PCM flag required; PCM16 LE, 0..4096 even bytes.",
+      "errors": "Bytes read, 0 if empty; -2 unavailable; invalid use traps."
+    },
+    {
       "name": "now_ms",
       "signature": "()i",
       "permission": 8,
@@ -394,8 +452,8 @@
         "render",
         "stop"
       ],
-      "limits": "36 bytes (baseline); 52 bytes also reports text_bytes_max, image_count_max, commands_max, kv_keys_max for this package level",
-      "errors": "0 成功 / success；−2 缓冲区过小 / short buffer；越界触发 trap / invalid address traps"
+      "limits": "36 bytes (baseline); 52 bytes also reports text_bytes_max, image_count_max, commands_max, kv_keys_max available to this package; 56 bytes adds the session log_dropped count",
+      "errors": "0 成功 / success；−1 缓冲区过小 / short buffer；越界触发 trap / invalid address traps"
     },
     {
       "name": "time_local",
@@ -474,6 +532,10 @@
     "TINYRT_EV_GAMEPAD": {
       "value": 8,
       "since_level": 1
+    },
+    "TINYRT_EV_MIC_LEVEL": {
+      "value": 9,
+      "since_level": 3
     },
     "TINYRT_EV_GYRO": {
       "value": 10,
@@ -679,6 +741,10 @@
     "HAPTIC": {
       "value": 32,
       "since_level": 1
+    },
+    "MIC": {
+      "value": 64,
+      "since_level": 3
     },
     "SENSOR": {
       "value": 128,

@@ -1,5 +1,8 @@
 /* WAMR is owned by one serialized worker; this module never touches LVGL. */
 #include "tinyrt_runtime.h"
+#define TINYRT_MIC_ABI_ONLY
+#include "../../contracts/guest-v1.h"
+#undef TINYRT_MIC_ABI_ONLY
 #include "wasm_export.h"
 #if WASM_ENABLE_AOT != 0
 #ifdef _MSC_VER
@@ -112,7 +115,9 @@ struct tinyrt_runtime {
     int32_t width, height;
     uint32_t clock_interval_ms, callback, input_events, audio_requests, image_count;
     bool ready, failed, stopped, skipped, aot;
-    uint32_t hardware_events;
+    uint32_t hardware_events, mic_flags;
+    uint32_t last_accessory_send_ms;
+    bool accessory_sent;
     uint32_t log_since_ms, log_count, log_dropped;
     char error[192];
 };
@@ -350,11 +355,16 @@ static int32_t clock_interval(wasm_exec_env_t e, int32_t ms)
     if (r->callback>1 || ms<1 || ms>1000) return fail(r,"clock interval or callback invalid");
     r->clock_interval_ms=(uint32_t)ms;return 0;
 }
+static uint32_t kv_capacity(const tinyrt_runtime_t *r)
+{
+    uint32_t limit = tinyrt_limits_for_level(r->policy.min_api_level).kv_keys;
+    return r->host.kv_keys && r->host.kv_keys < limit ? r->host.kv_keys : limit;
+}
 static int32_t kv_get(wasm_exec_env_t e, uint32_t key, int32_t fallback)
 {
     tinyrt_runtime_t *r = context(e);
     if (!permission(r, TINYRT_PERMISSION_STORAGE)) return -1;
-    if (key >= (r->policy.min_api_level>=4?TINYRT_KV_KEYS_MAX:TINYRT_KV_KEYS_BASE) || !r->host.kv_get) return fail(r, "key or storage callback invalid");
+    if (key >= kv_capacity(r) || !r->host.kv_get) return fail(r, "key or storage callback invalid");
     return r->host.kv_get(r->host.ctx, key, fallback);
 }
 static int32_t input_events(wasm_exec_env_t e, uint32_t mask)
@@ -371,7 +381,7 @@ static int32_t kv_set(wasm_exec_env_t e, uint32_t key, int32_t value)
 {
     tinyrt_runtime_t *r = context(e);
     if (!permission(r, TINYRT_PERMISSION_STORAGE)) return -1;
-    if (key >= (r->policy.min_api_level>=4?TINYRT_KV_KEYS_MAX:TINYRT_KV_KEYS_BASE) || !r->host.kv_set) return fail(r, "key or storage callback invalid");
+    if (key >= kv_capacity(r) || !r->host.kv_set) return fail(r, "key or storage callback invalid");
     if (r->host.kv_set(r->host.ctx, key, value) != TINYRT_OK) return fail(r, "storage callback failed");
     return 0;
 }
@@ -393,6 +403,73 @@ static void *guest_span(tinyrt_runtime_t *r,uint32_t ptr,uint32_t size)
     }
     return wasm_runtime_addr_app_to_native(r->instance,ptr);
 }
+static int32_t mic_open(wasm_exec_env_t e,uint32_t rate,uint32_t flags)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_MIC)) return -1;
+    if(r->callback>1 || rate!=16000 || !flags || (flags&~7u)) return fail(r,"invalid microphone open");
+    if(r->mic_flags) return 1;
+    const tinyrt_device_api_t *d=r->host.device;
+    if(!d || !d->mic_open || !d->mic_close) return -2;
+    int32_t result=d->mic_open(rate,flags);
+    if(!result) {
+        r->mic_flags=flags;
+        if(flags&TINYRT_MIC_LEVEL) r->hardware_events|=1u<<TINYRT_EV_MIC_LEVEL;
+    }
+    return result;
+}
+
+static int32_t release_mic(tinyrt_runtime_t *r)
+{
+    if(!r->mic_flags) return 0;
+    int32_t result=r->host.device->mic_close();
+    if(!result) {
+        r->mic_flags=0;
+        r->hardware_events&=~(1u<<TINYRT_EV_MIC_LEVEL);
+    }
+    return result;
+}
+
+static int32_t mic_close(wasm_exec_env_t e)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_MIC)) return -1;
+    if(r->callback>1) return fail(r,"invalid microphone close phase");
+    return release_mic(r);
+}
+
+static int32_t mic_gain(wasm_exec_env_t e,int32_t db)
+{
+    tinyrt_runtime_t *r=context(e);
+    if(!permission(r,TINYRT_PERMISSION_MIC)) return -1;
+    if(r->callback>1 || db<0 || db>42) return fail(r,"invalid microphone gain");
+    if(!r->mic_flags || !r->host.device->mic_gain) return -2;
+    return r->host.device->mic_gain(db-db%6);
+}
+
+static int32_t mic_copy(wasm_exec_env_t e,uint32_t ptr,uint32_t size,uint32_t mode)
+{
+    tinyrt_runtime_t *r=context(e);
+    const uint32_t stride=mode==TINYRT_MIC_PCM?2u:(uint32_t)sizeof(tinyrt_mic_frame_t);
+    if(!permission(r,TINYRT_PERMISSION_MIC)) return -1;
+    if(r->callback!=1 || !(r->mic_flags&mode) || size>4096 || size%stride)
+        return fail(r,"invalid microphone read");
+    void *dst=size?guest_span(r,ptr,size):NULL;
+    if(size && !dst) return -1;
+    const tinyrt_device_api_t *d=r->host.device;
+    int32_t (*read)(void *,uint32_t)=mode==TINYRT_MIC_PCM?d->mic_read:d->mic_features;
+    if(!read) return -2;
+    return size?read(dst,size):0;
+}
+static int32_t mic_read(wasm_exec_env_t e,uint32_t ptr,uint32_t size)
+{
+    return mic_copy(e,ptr,size,TINYRT_MIC_PCM);
+}
+static int32_t mic_features(wasm_exec_env_t e,uint32_t ptr,uint32_t size)
+{
+    return mic_copy(e,ptr,size,TINYRT_MIC_FEATURES);
+}
+
 static int32_t audio_queue_free(wasm_exec_env_t e)
 {
     tinyrt_runtime_t *r=context(e);
@@ -439,7 +516,15 @@ static int32_t acc_send(wasm_exec_env_t e,uint32_t type,uint32_t ptr,uint32_t si
     if(r->callback>1 || type<0x70 || type>0x7f || size>58) return fail(r,"invalid accessory frame");
     const void *src=size?guest_span(r,ptr,size):NULL;
     if(size && !src) return -1;
-    return r->host.device && r->host.device->acc_send?r->host.device->acc_send(type,src,size):-2;
+    if (!r->host.device || !r->host.device->acc_send || !r->host.now_ms) return -2;
+    uint32_t now = r->host.now_ms(r->host.ctx);
+    if (r->accessory_sent && now - r->last_accessory_send_ms < 20) return 1;
+    int32_t result = r->host.device->acc_send(type,src,size);
+    if (result == 0) {
+        r->accessory_sent = true;
+        r->last_accessory_send_ms = now;
+    }
+    return result;
 }
 static int32_t acc_read(wasm_exec_env_t e,uint32_t ptr,uint32_t capacity)
 {
@@ -455,7 +540,7 @@ static int32_t blob_read(wasm_exec_env_t e,uint32_t ptr,uint32_t capacity)
 {
     tinyrt_runtime_t *r=context(e);
     if(!permission(r,TINYRT_PERMISSION_STORAGE)) return -1;
-    if(capacity>2048) return -2;
+    if(capacity>2048) return -1;
     void *dst=capacity?guest_span(r,ptr,capacity):NULL;
     if(capacity && !dst) return -1;
     return r->host.blob_read?r->host.blob_read(r->host.ctx,dst,capacity):-2;
@@ -464,7 +549,7 @@ static int32_t blob_write(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
 {
     tinyrt_runtime_t *r=context(e);
     if(!permission(r,TINYRT_PERMISSION_STORAGE)) return -1;
-    if(length>2048) return -2;
+    if(length>2048) return -1;
     const void *src=length?guest_span(r,ptr,length):NULL;
     if(length && !src) return -1;
     return r->host.blob_write?r->host.blob_write(r->host.ctx,src,length):-2;
@@ -566,10 +651,12 @@ static int32_t sys_info(wasm_exec_env_t e,uint32_t ptr,uint32_t length)
     const uint32_t side=(uint32_t)((uint64_t)(w<h?w:h)*7071u/10000u);
     const tinyrt_limits_t limits=tinyrt_limits_for_level(r->policy.min_api_level);
     const uint32_t fields[]={TINYRT_HOST_API_LEVEL,w,h,(w-side)/2,(h-side)/2,side,side,
-        limits.memory_pages,limits.instructions,limits.text_bytes,limits.images,limits.commands,limits.kv_keys};
+        limits.memory_pages,limits.instructions,limits.text_bytes,limits.images,limits.commands,kv_capacity(r),r->log_dropped};
     const uint32_t legacy_size=9u*sizeof(uint32_t);
-    if(length<legacy_size) return -2;
-    uint32_t size=length>=sizeof(fields) ? sizeof(fields) : legacy_size;
+    if(length<legacy_size) return -1;
+    uint32_t size=legacy_size;
+    if (length>=52) size=52;
+    if (length>=sizeof(fields)) size=sizeof(fields);
     if(!wasm_runtime_validate_app_addr(r->instance,ptr,size)) return fail(r,"sys_info out of bounds");
     void *dst=wasm_runtime_addr_app_to_native(r->instance,ptr);
     if(!dst) return fail(r,"sys_info out of bounds");
@@ -620,6 +707,11 @@ static NativeSymbol natives[] = {
     { "input_events", (void *)input_events, "(i)i", NULL },
     { "kv_get", (void *)kv_get, "(ii)i", NULL },
     { "kv_set", (void *)kv_set, "(ii)i", NULL },
+    { "mic_close", (void *)mic_close, "()i", NULL },
+    { "mic_features", (void *)mic_features, "(ii)i", NULL },
+    { "mic_gain", (void *)mic_gain, "(i)i", NULL },
+    { "mic_open", (void *)mic_open, "(ii)i", NULL },
+    { "mic_read", (void *)mic_read, "(ii)i", NULL },
     { "now_ms", (void *)now_ms, "()i", NULL },
     { "random_u32", (void *)random_u32, "()i", NULL },
     { "runtime_backend", (void *)runtime_backend, "()i", NULL },
@@ -628,9 +720,9 @@ static NativeSymbol natives[] = {
     { "time_local", (void *)time_local, "(ii)i", NULL },
     { "time_subscribe", (void *)time_subscribe, "(i)i", NULL }
 };
-static const unsigned arity[] = { 2, 3, 3, 3, 0, 2, 2, 2, 2, 2, 1, 2, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 2, 0, 2, 2, 1, 2, 2, 0, 0, 0, 1, 2, 2, 1 };
-static const uint32_t required_permission[] = { 512, 512, 0, 16, 16, 16, 16, 256, 4, 4, 8, 0, 256, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 32, 128, 128, 2, 4, 4, 8, 0, 0, 256, 0, 8, 8 };
-static const unsigned since_level[] = { 4, 4, 1, 1, 4, 4, 4, 3, 4, 4, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 3, 3, 1, 1, 1, 1, 2, 1, 3, 2, 3, 3 };
+static const unsigned arity[] = { 2, 3, 3, 3, 0, 2, 2, 2, 2, 2, 1, 2, 1, 7, 1, 5, 6, 8, 6, 0, 5, 9, 3, 6, 1, 0, 4, 0, 4, 2, 1, 5, 7, 2, 2, 0, 2, 2, 1, 2, 2, 0, 2, 1, 2, 2, 0, 0, 0, 1, 2, 2, 1 };
+static const uint32_t required_permission[] = { 512, 512, 0, 16, 16, 16, 16, 256, 4, 4, 8, 0, 256, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1, 1, 32, 32, 32, 128, 128, 2, 4, 4, 64, 64, 64, 64, 64, 8, 0, 0, 256, 0, 8, 8 };
+static const unsigned since_level[] = { 4, 4, 1, 1, 4, 4, 4, 3, 4, 4, 1, 2, 3, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 4, 1, 1, 3, 3, 1, 1, 1, 3, 3, 3, 3, 3, 1, 2, 1, 3, 2, 3, 3 };
 static const char *exports[] = { "tinyrt_init", "tinyrt_event", "tinyrt_render", "tinyrt_stop" };
 static const unsigned export_arity[] = { 2, 4, 0, 0 };
 
@@ -682,7 +774,7 @@ static bool u32(reader_t *r, uint32_t *out)
 }
 static bool policy_valid(const tinyrt_package_policy_t *p)
 {
-    return p && (p->min_api_level>=4 || !(p->permissions&TINYRT_PERMISSION_ACCESSORY)) && (p->min_api_level>=3 || !(p->permissions&(TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
+    return p && (p->min_api_level>=4 || !(p->permissions&TINYRT_PERMISSION_ACCESSORY)) && (p->min_api_level>=3 || !(p->permissions&(TINYRT_PERMISSION_MIC|TINYRT_PERMISSION_SENSOR|TINYRT_PERMISSION_SYSTEM))) && p->abi_version == 1 && !(p->permissions & ~TINYRT_PERMISSION_ALL)
         && p->max_memory_pages >= 1 && p->max_memory_pages <= tinyrt_limits_for_level(p->min_api_level).memory_pages
         && p->instruction_budget >= 1 && p->instruction_budget <= tinyrt_limits_for_level(p->min_api_level).instructions;
 }
@@ -912,6 +1004,7 @@ tinyrt_status_t tinyrt_runtime_validate_aot(void *ctx,const tinyrt_store_io_t *i
 void tinyrt_runtime_destroy(tinyrt_runtime_t *r)
 {
     if (!r) return;
+    release_mic(r);
     tinyrt_gfx_resources_release(r->gfx);
     if (r->env) wasm_runtime_destroy_exec_env(r->env);
     if (r->instance) wasm_runtime_deinstantiate(r->instance);
@@ -998,6 +1091,7 @@ static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t a
         uint8_t stack_marker;
         uintptr_t low=(uintptr_t)os_thread_get_stack_boundary(),current=(uintptr_t)&stack_marker;
         if(!low || low>=current || current-low<=WASM_STACK_GUARD_SIZE) {
+            release_mic(r);
             r->failed=true;snprintf(r->error,sizeof(r->error),"native stack boundary unavailable");
             return TINYRT_INVALID_ARGUMENT;
         }
@@ -1007,6 +1101,7 @@ static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t a
         tinyrt_status_t status = r->guard.arm(r->guard.ctx, cancel_callback, r, r->guard.timeout_ms);
         if (status != TINYRT_OK) {
             r->failed = true;
+            release_mic(r);
             snprintf(r->error, sizeof(r->error), "callback guard could not start");
             return status;
         }
@@ -1022,6 +1117,7 @@ static tinyrt_status_t invoke(tinyrt_runtime_t *r, unsigned function, uint32_t a
         snprintf(r->error, sizeof(r->error), "guest callback cancelled");
     }
     if (!ok || r->failed || (int32_t)argv[0] != 0) {
+        release_mic(r);
         const char *exception = wasm_runtime_get_exception(r->instance);
         if (!r->failed) snprintf(r->error, sizeof(r->error), "%s", exception ? exception : "guest returned failure");
         r->failed = true;
@@ -1040,11 +1136,13 @@ tinyrt_status_t tinyrt_runtime_init(tinyrt_runtime_t *r, int32_t width, int32_t 
 }
 tinyrt_status_t tinyrt_runtime_event(tinyrt_runtime_t *r, int32_t kind, int32_t x, int32_t y, int32_t arg)
 {
-    if (!r || !r->ready || r->stopped || kind < 1 || kind==9 || kind > 13) return TINYRT_INVALID_ARGUMENT;
+    if (!r || !r->ready || r->stopped || kind < 1 || kind > 13) return TINYRT_INVALID_ARGUMENT;
     if (r->failed) return TINYRT_VERIFY_FAILED;
     if(kind==7 && (r->hardware_events&(1u<<7))) {
         if(!(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
     } else if (kind!=2 && kind<=8 && !(r->policy.permissions&TINYRT_PERMISSION_INPUT)) return TINYRT_INVALID_ARGUMENT;
+    if(kind==TINYRT_EV_MIC_LEVEL && (!(r->policy.permissions&TINYRT_PERMISSION_MIC) ||
+        x<0 || x>32767 || y<0 || y>32767 || (uint32_t)arg>65535)) return TINYRT_INVALID_ARGUMENT;
     if ((kind==10 || kind==11) && !(r->policy.permissions&TINYRT_PERMISSION_SENSOR)) return TINYRT_INVALID_ARGUMENT;
     if (kind==12 && !(r->policy.permissions&TINYRT_PERMISSION_CLOCK)) return TINYRT_INVALID_ARGUMENT;
     if(kind==13 && !(r->policy.permissions&TINYRT_PERMISSION_ACCESSORY)) return TINYRT_INVALID_ARGUMENT;
@@ -1065,6 +1163,7 @@ tinyrt_status_t tinyrt_runtime_stop(tinyrt_runtime_t *r)
     if (!r->ready) return TINYRT_INVALID_ARGUMENT;
     if (r->stopped) return TINYRT_OK;
     r->stopped = true;
+    release_mic(r);
     if (!r->functions[3]) return TINYRT_OK;
     uint32_t argv[1] = { 0 };
     return invoke(r,3,0,argv);
@@ -1087,6 +1186,7 @@ tinyrt_status_t tinyrt_runtime_render(tinyrt_runtime_t *r, tinyrt_frame_t *out)
     r->frame = NULL;
     if (r->gfx_rejected || r->gfx_open) { if(out->count && out->commands[0].kind==TINYRT_DRAW_RASTER)tinyrt_frame_release(out); out->count=0;return TINYRT_INVALID_ARGUMENT; }
     if (status == TINYRT_OK && !out->count && !r->skipped) {
+        release_mic(r);
         fail(r, "empty frame");
         status = TINYRT_VERIFY_FAILED;
     }

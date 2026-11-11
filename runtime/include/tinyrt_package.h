@@ -15,10 +15,11 @@ extern "C" {
 #define TINYRT_PERMISSION_CLOCK 8u
 #define TINYRT_PERMISSION_AUDIO 16u
 #define TINYRT_PERMISSION_HAPTIC 32u
+#define TINYRT_PERMISSION_MIC 64u
 #define TINYRT_PERMISSION_SENSOR 128u
 #define TINYRT_PERMISSION_SYSTEM 256u
 #define TINYRT_PERMISSION_ACCESSORY 512u
-#define TINYRT_PERMISSION_ALL 959u
+#define TINYRT_PERMISSION_ALL 1023u
 typedef struct {
     uint32_t abi_version, permissions, max_memory_pages, instruction_budget;
     uint32_t min_api_level; /* Zero-initialized policies use the Level 1 baseline. */

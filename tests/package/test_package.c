@@ -60,6 +60,10 @@ int main(int argc,char **argv) {
     config.require_aot_on_install=true;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_ERR_AOT_MISSING);
     config.require_aot_on_install=false;
+    /* ACCESSORY is known but needs Level 4, before any module validation. */
+    data[41] |= (TINYRT_PERMISSION_ACCESSORY >> 8);
+    CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_VERIFY_FAILED);
+    data[41]=0;
     data[184]=1;
     CHECK(tinyrt_package_inspect(&config,&io,base,data_size,&metadata)==TINYRT_OK);
     data[184]=TINYRT_HOST_API_LEVEL+1;

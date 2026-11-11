@@ -31,4 +31,37 @@ static void runtime_failures(void){divide_by_zero();const char*names[]={"spin","
 
 static void examples(void){fixture_directory=EXAMPLE_DIR;const char*names[]={"counter-v1","counter-v2","color"};saved=7;uint32_t background=0;for(unsigned i=0;i<3;i++){fixture(names[i]);tinyrt_runtime_t*rt=NULL;CHECK(tinyrt_runtime_create(bytes,size,&policy,&host,&rt)==TINYRT_OK);if(!rt)continue;CHECK(tinyrt_runtime_init(rt,466,466)==TINYRT_OK);static tinyrt_frame_t f;CHECK(tinyrt_runtime_render(rt,&f)==TINYRT_OK);CHECK(f.count==(i==2?3u:5u));if(i==0){CHECK(!strcmp(f.commands[3].text,"7"));background=f.commands[0].rgb;}if(i==1){CHECK(!strcmp(f.commands[3].text,"8"));CHECK(f.commands[0].rgb!=background);}CHECK(tinyrt_runtime_event(rt,1,30,40,0)==TINYRT_OK);CHECK(tinyrt_runtime_render(rt,&f)==TINYRT_OK);if(i<2){CHECK(saved==(int32_t)(8+i));CHECK(!strcmp(f.commands[3].text,i==0?"8":"9"));}else CHECK(f.commands[0].rgb==0x9e2a2b);tinyrt_runtime_destroy(rt);}fixture_directory=FIXTURE_DIR;}
 
-int main(void){CHECK(tinyrt_runtime_system_init()==TINYRT_OK);rejects();lifecycle();runtime_failures();fixture("valid");tinyrt_runtime_t*rt=NULL;tinyrt_package_policy_t p=policy;p.permissions=0;CHECK(tinyrt_runtime_create(bytes,size,&p,&host,&rt)==TINYRT_VERIFY_FAILED);CHECK(rt==NULL);examples();free(bytes);tinyrt_runtime_system_shutdown();CHECK(tinyrt_runtime_memory_used()==0);printf("runtime checks=%d failures=%d\n",checks,failures);return failures?1:0;}
+/* Built by SDK d82a4b0 before API Level existed. Verify the whole envelope,
+ * validate imports, then instantiate the original Wasm on the desktop. */
+static void legacy_packages(void)
+{
+    const char *names[]={"flappy","pixel_quest","wave_sim"};
+    const tinyrt_package_verifier_t verifier={.validate_wasm=tinyrt_runtime_validate_wasm};
+    const tinyrt_store_io_t io={.read=read_bytes};
+    for (unsigned i=0;i<sizeof(names)/sizeof(names[0]);i++) {
+        char path[512];
+        snprintf(path,sizeof(path),"%s/../legacy-0.1.0/%s.trpkg",EXAMPLE_DIR,names[i]);
+        FILE *file=fopen(path,"rb");
+        CHECK(file!=NULL);
+        if (!file) continue;
+        fseek(file,0,SEEK_END);
+        size=(uint32_t)ftell(file);
+        rewind(file);
+        free(bytes);
+        bytes=malloc(size);
+        if (!bytes) exit(2);
+        CHECK(fread(bytes,1,size,file)==size);
+        fclose(file);
+        tinyrt_package_metadata_t meta;
+        tinyrt_status_t result=tinyrt_package_inspect(&verifier,&io,0,size,&meta);
+        CHECK(result==TINYRT_OK);
+        if (result!=TINYRT_OK) continue;
+        CHECK(meta.policy.min_api_level==1 && meta.aot_size>0);
+        tinyrt_runtime_t *instance=NULL;
+        CHECK(tinyrt_runtime_create(bytes+meta.wasm_offset,meta.wasm_size,
+                                    &meta.policy,&host,&instance)==TINYRT_OK);
+        if (instance) tinyrt_runtime_destroy(instance);
+    }
+}
+
+int main(void){CHECK(tinyrt_runtime_system_init()==TINYRT_OK);rejects();lifecycle();runtime_failures();fixture("valid");tinyrt_runtime_t*rt=NULL;tinyrt_package_policy_t p=policy;p.permissions=0;CHECK(tinyrt_runtime_create(bytes,size,&p,&host,&rt)==TINYRT_VERIFY_FAILED);CHECK(rt==NULL);examples();legacy_packages();free(bytes);tinyrt_runtime_system_shutdown();CHECK(tinyrt_runtime_memory_used()==0);printf("runtime checks=%d failures=%d\n",checks,failures);return failures?1:0;}

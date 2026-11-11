@@ -5,6 +5,71 @@ ROOT=Path(__file__).resolve().parents[2]
 RUNNER=Path(os.environ.get('TINYRT_RUNNER',str(ROOT/'build/tinyrt-run.exe')))
 FIXTURES=Path(os.environ.get('TINYRT_FIXTURE_DIR',str(ROOT/'tests/runtime/fixtures')))
 class Runner(unittest.TestCase):
+    def test_microphone_virtual_time_and_import_guards(self):
+        import struct, wave
+        sys.path.insert(0, str(ROOT / 'tests/runtime'))
+        from make_fixtures import c, call
+        from make_round_fixtures import guest
+        folder = RUNNER.parent / 'runner-fixtures'
+        folder.mkdir(exist_ok=True)
+        path, wav = folder / 'mic.wasm', folder / 'mic.wav'
+        with wave.open(str(wav), 'wb') as f:
+            f.setparams((1, 2, 16000, 0, 'NONE', ''))
+            f.writeframes(struct.pack('<480h', *range(480)))
+        imports = [('draw_clear', 1), ('mic_open', 2), ('mic_features', 2),
+                   ('mic_read', 2), ('kv_set', 2), ('mic_close', 0), ('mic_gain', 1)]
+        def invoke(index, *args):
+            return b''.join(c(x) for x in args) + call(index)
+        def save(key, value):
+            return c(key) + value + call(4) + b'\x1a'
+        render = invoke(0, 0) + b'\x1a' + c(0)
+        opened = invoke(1, 16000, 5)
+        init = save(0, opened) + save(1, opened) + save(7, invoke(6, 25)) + c(0)
+        event = (save(2, invoke(2, 0, 64)) + save(3, c(0) + b'\x28\0\0')
+                 + save(4, c(32) + b'\x28\0\0') + save(5, invoke(3, 640, 4096))
+                 + save(6, c(640) + b'\x2f\0\0') + c(0))
+        options = ['--min-api-level', '3', '--permissions', '77', '--mic', str(wav)]
+        path.write_bytes(guest(imports, render, init=init, event=event))
+        p, rows = self.run_guest(path, 'tick 20\ntick 30\ntick 50\n', *options)
+        self.assertEqual(p.returncode, 0, p.stderr+p.stdout)
+        self.assertEqual(rows[0]['kv'][:2], [0, 1])
+        self.assertEqual(rows[0]['kv'][7], 24)
+        self.assertEqual(rows[1]['kv'][2:7], [64, 0, 1, 640, 0])
+        self.assertEqual(rows[2]['kv'][2:7], [32, 2, 1, 320, 320])
+        self.assertEqual((rows[3]['kv'][2], rows[3]['kv'][5]), (0, 0))
+        p, rows = self.run_guest(path, '', *options[:4])
+        self.assertEqual(rows[0]['kv'][0], -2)
+        for flags, phase, read in [(0, 'event', invoke(3, 0, 2)),
+                                   (1, 'init', invoke(3, 0, 2)),
+                                   (1, 'event', invoke(3, 0, 3)),
+                                   (4, 'event', invoke(2, 0, 4097)),
+                                   (4, 'event', invoke(2, 0, 33)),
+                                   (4, 'event', invoke(3, 0, 2))]:
+            start = invoke(1, 16000, flags) + b'\x1a' if flags else b''
+            bad = read + b'\x1a' + c(0)
+            path.write_bytes(guest(imports, render, init=start+(bad if phase=='init' else c(0)), event=bad))
+            p, rows = self.run_guest(path, 'tick 10\n', *options)
+            self.assertEqual(p.returncode, 1, (flags, phase, p.stdout))
+            self.assertEqual(rows[-2]['phase'], 'init' if phase=='init' else 'tick')
+        # The automatic levels use virtual sample time; explicitly injected
+        # levels carry the same ABI payload and stop after the Guest closes.
+        with wave.open(str(wav), 'wb') as f:
+            f.setparams((1, 2, 16000, 0, 'NONE', ''))
+            f.writeframes(struct.pack('<1600h', *([1200]*1600)))
+        level_init = invoke(1, 16000, 2)
+        level_event = save(0, b'\x20\x01') + save(1, b'\x20\x02') + save(2, b'\x20\x03') + c(0)
+        path.write_bytes(guest(imports, render, init=level_init, event=level_event))
+        p, rows = self.run_guest(path, 'advance 75\nmic_level 7 8 9\n', *options)
+        self.assertEqual(p.returncode, 0, p.stdout+p.stderr)
+        levels = [row for row in rows if row['phase'] == 'mic_level']
+        self.assertEqual([row['now_ms'] for row in levels], [40, 70, 75])
+        self.assertEqual([row['kv'][:2] for row in levels[:2]], [[1200, 1200]]*2)
+        self.assertEqual(levels[2]['kv'][:3], [7, 8, 9])
+        for level, permissions in [('3','13'), ('2','77')]:
+            p, rows = self.run_guest(path, '', '--min-api-level', level, '--permissions', permissions)
+            self.assertNotEqual(rows[0]['status'], 0)
+            self.assertEqual(rows[0]['phase'], 'create')
+
     def test_motion_opt_in_and_signed_range(self):
         guest=self.event_guest('motion_opt_in',128)
         p,r=self.run_guest(guest,'motion -700 0 1000\ncapture\n')

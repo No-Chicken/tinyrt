@@ -1,4 +1,26 @@
-#ifndef TINYRT_SDK_H
+/* Shared with the native feature extractor. The SDK ships this header standalone. */
+#ifndef TINYRT_MIC_ABI_H
+#define TINYRT_MIC_ABI_H
+#include <stdint.h>
+#define TINYRT_EV_MIC_LEVEL 9
+#define TINYRT_MIC_PCM 1u
+#define TINYRT_MIC_LEVEL 2u
+#define TINYRT_MIC_FEATURES 4u
+#define TINYRT_MICF_PLAYBACK 0x0001u
+#define TINYRT_MICF_CLIPPED 0x0002u
+#define TINYRT_MICF_OVERRUN 0x0004u
+#define TINYRT_MICF_SETTLING 0x0008u
+/* Frozen 32-byte LE record, one per 160 samples (10 ms at 16 kHz). */
+typedef struct {
+    uint32_t seq, t_ms;                 /* Sequence since open and end-of-frame host clock. */
+    int16_t rms_db_q8, floor_db_q8;     /* dBFS x 256, minimum -100 dBFS. */
+    uint16_t peak, zcr;
+    uint16_t band_q15[4];              /* 50-500, 500-2000, 2000-4000, 4000-7500 Hz. */
+    uint16_t flatness_q15, pitch_hz_q4, pitch_conf_q15, flags;
+} tinyrt_mic_frame_t;
+#endif
+
+#if !defined(TINYRT_SDK_H) && !defined(TINYRT_MIC_ABI_ONLY)
 #define TINYRT_SDK_H
 #include <stdint.h>
 #define TINYRT_API_LEVEL_BASE 1
@@ -77,6 +99,19 @@ TINYRT_IMPORT(imu_read) int32_t imu_read(void *dst,uint32_t length);
 TINYRT_IMPORT(input_events) int32_t input_events(uint32_t mask);
 TINYRT_IMPORT(kv_get) int32_t kv_get(uint32_t key,int32_t fallback);
 TINYRT_IMPORT(kv_set) int32_t kv_set(uint32_t key,int32_t value);
+/* Level 3, MIC=64. Recording is visible to the user and ends on app teardown.
+ * Reassess raw PCM permission before adding networking or audio-sized storage.
+ * Open in init/event: 16000 Hz, nonempty PCM|LEVEL|FEATURES flags, default gain 24 dB.
+ * 0 opened, 1 busy, -2 unavailable. Close in init/event; already closed returns 0.
+ * Event-only reads return bytes from a one-second FIFO, oldest items drop on overrun.
+ * Read even PCM byte counts or multiples of 32 feature bytes, each <=4096.
+ * Gain in init/event: 0..42 dB rounded down to 6 dB steps; 200 ms settling.
+ * MIC_LEVEL: peak in x, RMS in y (both 0..32767), flags in arg (low 16 bits). */
+TINYRT_IMPORT(mic_close) int32_t mic_close(void);
+TINYRT_IMPORT(mic_features) int32_t mic_features(void *dst,uint32_t length);
+TINYRT_IMPORT(mic_gain) int32_t mic_gain(int32_t db);
+TINYRT_IMPORT(mic_open) int32_t mic_open(uint32_t sample_rate,uint32_t flags);
+TINYRT_IMPORT(mic_read) int32_t mic_read(void *dst,uint32_t length);
 TINYRT_IMPORT(now_ms) uint32_t now_ms(void);
 TINYRT_IMPORT(random_u32) uint32_t random_u32(void);
 /* 0 instruction-metered interpreter,1 deadline-guarded AOT. */
@@ -90,7 +125,11 @@ typedef struct {
     uint32_t text_bytes_max,image_count_max,commands_max,kv_keys_max;
 } tinyrt_sys_info_v4_t;
 TINYRT_IMPORT(screen_keep_on) int32_t screen_keep_on(int32_t on);
-/* Writes the 36-byte baseline or the full 52-byte quota record when the buffer fits. */
+typedef struct {
+    tinyrt_sys_info_v4_t quotas;
+    uint32_t log_dropped;
+} tinyrt_sys_info_diagnostics_t;
+/* Writes the largest complete record that fits (36, 52 or 56 bytes). */
 TINYRT_IMPORT(sys_info) int32_t sys_info(void *destination,uint32_t length);
 TINYRT_IMPORT(time_local) int32_t time_local(void *dst,uint32_t length);
 TINYRT_IMPORT(time_subscribe) int32_t time_subscribe(uint32_t flags);

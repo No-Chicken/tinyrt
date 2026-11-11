@@ -61,6 +61,11 @@ typedef struct {
     int32_t (*haptic_pattern)(const uint16_t *steps,uint32_t count);
     int32_t (*acc_send)(uint32_t type,const void *buf,uint32_t length);
     int32_t (*acc_read)(void *buf,uint32_t capacity);
+    int32_t (*mic_open)(uint32_t sample_rate,uint32_t flags);
+    int32_t (*mic_read)(void *dst,uint32_t length);
+    int32_t (*mic_features)(void *dst,uint32_t length);
+    int32_t (*mic_gain)(int32_t db);
+    int32_t (*mic_close)(void);
 } tinyrt_device_api_t;
 
 typedef struct {
@@ -82,6 +87,8 @@ typedef struct {
     const tinyrt_device_api_t *device;
     int32_t (*blob_read)(void *ctx,void *dst,uint32_t capacity);
     int32_t (*blob_write)(void *ctx,const void *src,uint32_t length);
+    /* Zero lets a direct runtime host support the full package quota. */
+    uint32_t kv_keys;
 } tinyrt_runtime_host_t;
 /* All APIs are serialized by ONE owner thread. ESP-IDF owner MUST be a
  * pthread, not a raw FreeRTOS task (WAMR port calls pthread_self). Call init

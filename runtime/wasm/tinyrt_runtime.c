@@ -445,6 +445,7 @@ static int32_t acc_read(wasm_exec_env_t e,uint32_t ptr,uint32_t capacity)
 {
     tinyrt_runtime_t *r=context(e);
     if(!permission(r,TINYRT_PERMISSION_ACCESSORY)) return -1;
+    if(r->callback!=1) return fail(r,"accessory read outside event");
     uint32_t size=capacity>58?58:capacity;
     void *dst=size?guest_span(r,ptr,size):NULL;
     if(size && !dst) return -1;

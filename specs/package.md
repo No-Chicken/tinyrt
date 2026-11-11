@@ -18,7 +18,7 @@ offset32..151 的字段如下表；字符串 NUL 终止，NUL 后全零。offset
 | 偏移 | 字段 |
 |---|---|
 | 32、36 | u32 app_version>0、abi_version=1 |
-| 40 | u32 permissions，draw=1、input=2、storage=4、clock=8、audio=16、haptic=32，其他位为零 |
+| 40 | u32 permissions，draw=1、input=2、storage=4、clock=8、audio=16、haptic=32（Level 1），mic=64、sensor=128、system=256（Level 3），accessory=512（Level 4）；包声明的 Level 低于权限位的引入 Level 时拒绝，其他位为零 |
 | 44、48 | 两个 u32。Level 1–3 的 memory_pages 为 1..16，instruction_budget 为 1..100000；Level 4 分别为 1..20 和 1..125000 |
 | 52 | u32 key_id，仅信息，不参与校验；SDK 固定写 1 |
 | 56 | app_id[32]，1..31 字节 ASCII `[a-z0-9._-]` |

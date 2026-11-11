@@ -207,7 +207,9 @@ def main() -> None:
     binary = wamrc_build / ("wamrc.exe" if os.name=="nt" else "wamrc")
     cc = "cl" if os.name=="nt" else os.environ.get("CC","cc")
     compiler = subprocess.run([cc] if os.name=="nt" else [cc,"--version"], capture_output=True, encoding="utf-8", errors="replace")
-    manifest = {"schema": 1, "source_lock_sha256": digest(lock_path),
+    # The lock is text; hash it with LF line endings so CRLF checkouts match the SDK pin.
+    lock_sha = hashlib.sha256(lock_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+    manifest = {"schema": 1, "source_lock_sha256": lock_sha,
         "build_script_sha256": digest(Path(__file__)),
         "sources": {"wamr": lock["wamr"], "llvm": lock["llvm"]},
         "patches": [{"name": name, "sha256": digest(path)}

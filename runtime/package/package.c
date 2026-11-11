@@ -170,6 +170,10 @@ tinyrt_status_t tinyrt_package_inspect(const tinyrt_package_verifier_t *v,
     tinyrt_status_t r=io->read(io->ctx,off,header,sizeof(header));
     if(r!=TINYRT_OK) return r;
     tinyrt_package_metadata_t m={0};
+    /* Check the level first: a newer package may use permission bits or
+     * limits this host does not know, and must report "update firmware". */
+    if(!memcmp(header,"TRPKG001",8) && get32(header+184)>TINYRT_HOST_API_LEVEL)
+        return TINYRT_ERR_API_LEVEL;
     if(!parse_header(header,length,&m)) return TINYRT_VERIFY_FAILED;
     if(m.policy.min_api_level>TINYRT_HOST_API_LEVEL) return TINYRT_ERR_API_LEVEL;
     if(m.policy.min_api_level<4 && (m.policy.permissions&TINYRT_PERMISSION_ACCESSORY)) return TINYRT_VERIFY_FAILED;

@@ -52,6 +52,7 @@
       "TINYRT_OP_MOBILE_STATUS": 29,
       "TINYRT_OP_GET_DEVICE_INFO": 30,
       "TINYRT_OP_LAST_CRASH": 31,
+      "TINYRT_OP_PREPARE_PERMISSIONS": 32,
       "TINYRT_CAP_COVER_MOBILE_CONFIRM": 128
     }
   },
@@ -122,6 +123,13 @@
       "response": "schema:u16le=1, phase:u8 (1 init, 2 event, 3 render, 4 stop), reason_length:u8, function_index:u32le, pc:u32le, identity68, reason[reason_length] (UTF-8, 1..160 bytes)",
       "semantics": "Latest failed guest callback in manager RAM. No record returns NOT_FOUND. Unknown function index or PC is 0xffffffff. PC denotes a function-relative Wasm byte offset when available."
     },
+    "prepare_permissions": {
+      "opcode": 32,
+      "request_size": 76,
+      "request": "identity68 (app_id32, version:u32le, package SHA-256[32]), package_size:u32le, permissions:u32le",
+      "response": "same as PREPARE (0x13)",
+      "semantics": "PREPARE that also declares the package permission bits, so the device can show them on the install confirmation before the package arrives. The install is rejected if the package header declares different permissions. Clients use it only when device info reports perm=1, otherwise they send PREPARE."
+    },
     "device_info": {
       "opcode": 30,
       "request_size": 0,
@@ -174,6 +182,12 @@
         "api_level": {
           "type": "integer",
           "minimum": 1
+        },
+        "perm": {
+          "type": "integer",
+          "value": 1,
+          "optional": true,
+          "semantics": "Present when the host accepts PREPARE_PERMISSIONS (0x20)."
         }
       },
       "old_host": {

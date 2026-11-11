@@ -86,7 +86,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(info["response_max_bytes"], 254)
         self.assertEqual(info["response_max_bytes"] + 2, spec["management"]["max_message"])
         fields = info["response"]
-        self.assertEqual(set(fields), {"schema", "abi", "api_level", "firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build", "transports"})
+        self.assertEqual(set(fields), {"schema", "abi", "api_level", "perm", "firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build", "transports"})
         self.assertEqual(fields["schema"], {"type": "integer", "value": 1})
         for name in ("firmware", "tinyrt", "sdk", "esp_idf", "lvgl", "build"):
             self.assertEqual(fields[name]["type"], "string", name)

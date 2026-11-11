@@ -9,6 +9,7 @@ static uint32_t le32(const uint8_t *p)
 
 int mic_wav_open(mic_wav_t *wav,const char *path)
 {
+    memset(wav,0,sizeof(*wav));
     uint8_t buf[16];
     FILE *f=fopen(path,"rb");
     if(!f) return 0;
@@ -41,6 +42,7 @@ int mic_wav_open(mic_wav_t *wav,const char *path)
     }
     if(!have_fmt || !have_data || fseek(f,wav->start,SEEK_SET)) goto bad;
     wav->file=f;
+    if(!mic_wav_load_meta(wav,path)) { mic_wav_close(wav); return 0; }
     return 1;
 bad:
     fclose(f);

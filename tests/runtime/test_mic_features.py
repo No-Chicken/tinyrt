@@ -1,5 +1,6 @@
 """Exercise the shipped WAV reader and the same feature extractor used by firmware."""
 import csv
+import json
 import math
 from pathlib import Path
 import random
@@ -68,6 +69,20 @@ class Features(unittest.TestCase):
         edges = self.frames(lambda i: 32767 if i < 160 else -32768, 2)
         self.assertEqual([f['zcr'] for f in edges], [0, 1])
         self.assertTrue(all(f['flags'] & 2 for f in edges))
+
+    def test_recorded_host_flags_control_floor_history(self):
+        metadata = {'start_ms': 43000, 'settling': [[0, 1600]],
+                    'playback': [[1600, 1920]], 'overrun': [[2080, 2240]]}
+        self.wav.with_suffix('.json').write_text(json.dumps(metadata), encoding='utf-8')
+        fx = self.frames(lambda i: 1000 * math.sin(i * math.tau / 16), 15)
+        self.assertEqual([f['t_ms'] for f in fx], list(range(43010, 43151, 10)))
+        self.assertTrue(all(f['floor_db_q8'] == -25600 for f in fx[:12]))
+        self.assertEqual(fx[12]['floor_db_q8'], fx[12]['rms_db_q8'])
+        self.assertEqual([f['seq'] for f in fx if f['flags'] & 1], [10, 11])
+        self.assertEqual([f['seq'] for f in fx if f['flags'] & 4], [13])
+        metadata['settling'] = [[160, 0]]
+        self.wav.with_suffix('.json').write_text(json.dumps(metadata), encoding='utf-8')
+        self.assertNotEqual(self.run_tool().returncode, 0)
 
     def test_invalid_wav(self):
         self.write([0]*160, 8000)

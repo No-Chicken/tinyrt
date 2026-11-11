@@ -77,8 +77,7 @@ int32_t mic_replay_close(void)
 void mic_replay_shutdown(void)
 {
     mic_replay_close();
-    if(wav.file) fclose(wav.file);
-    memset(&wav,0,sizeof(wav)); playback_end=0;
+    mic_wav_close(&wav); playback_end=0;
 }
 
 int32_t mic_replay_open(uint32_t now,uint32_t flags)
@@ -131,7 +130,8 @@ int mic_replay_advance(uint32_t target,mic_level_t *level)
         if(mic_wav_read(&wav,block,n)!=n) return -1;
         mic.remaining-=n;
         uint32_t t_ms=(uint32_t)mic.next_ms;
-        uint16_t flags=0;
+        uint32_t end=wav.samples-mic.remaining;
+        uint16_t flags=mic_wav_flags(&wav,end-n,end);
         if(mic.next_ms-TINYRT_MIC_FRAME_MS<playback_end) flags|=TINYRT_MICF_PLAYBACK;
         if(mic.next_ms<=mic.settle_until) flags|=TINYRT_MICF_SETTLING;
         mic.next_ms+=TINYRT_MIC_FRAME_MS;

@@ -271,7 +271,7 @@ int main(int argc, char **argv) {
         uint32_t value;
         if(i+1<argc && !strcmp(argv[i],"--mic")) {
             if(!mic_replay_file(argv[i+1])) {
-                fprintf(stderr,"Expected a single valid 16000 Hz mono PCM16 WAV\n"); return 2;
+                fprintf(stderr,"Expected one valid 16000 Hz mono PCM16 WAV and valid capture metadata if present\n"); return 2;
             }
             continue;
         }

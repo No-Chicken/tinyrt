@@ -20,7 +20,7 @@ else()
   include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/HostWamr.cmake")
 endif()
 
-add_library(tinyrt_mic_host STATIC runtime/audio/tinyrt_mic_features.c tools/mic_wav.c)
+add_library(tinyrt_mic_host STATIC runtime/audio/tinyrt_mic_features.c tools/mic_wav.c tools/mic_wav_meta.c)
 target_include_directories(tinyrt_mic_host PUBLIC runtime/audio)
 if(NOT MSVC)
   target_link_libraries(tinyrt_mic_host PUBLIC m)

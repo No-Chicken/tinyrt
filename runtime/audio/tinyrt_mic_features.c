@@ -3,7 +3,56 @@
 #include <string.h>
 
 #define N TINYRT_MIC_FFT
-#define PI 3.14159265358979323846f
+/* IEEE binary32 and explicit FMA keep quantized frames identical across
+ * RV32 and desktop libm/compilers. Only exact exponent scaling and specified
+ * IEEE rounding operations are delegated to the platform. */
+static float phase_sine(unsigned phase,unsigned quarter)
+{
+    unsigned quadrant=phase/quarter, step=phase%quarter;
+    if(quadrant&1) step=quarter-step;
+    float x=(float)step/(float)quarter*1.5707963267948966f;
+    float xx=x*x;
+    /* sin(x) through x^13 on [0, pi/2], remainder below 7e-10. */
+    float p=fmaf(xx,1.0f/6227020800.0f,-1.0f/39916800.0f);
+    p=fmaf(xx,p,1.0f/362880.0f);
+    p=fmaf(xx,p,-1.0f/5040.0f);
+    p=fmaf(xx,p,1.0f/120.0f);
+    p=fmaf(xx,p,-1.0f/6.0f);
+    float value=x*fmaf(xx,p,1.0f);
+    return quadrant&2 ? -value : value;
+}
+
+/* Positive, normal binary32 inputs. Range reduction gives |z| <= 0.172
+ * for ln(m) = 2(z + z^3/3 + ...). The omitted terms sum to < 8e-10. */
+static float feature_log(float x)
+{
+    uint32_t bits;
+    memcpy(&bits,&x,sizeof(bits));
+    int exponent=(int)(bits>>23)-127;
+    bits=(bits&0x007fffffu)|0x3f800000u;
+    float m;
+    memcpy(&m,&bits,sizeof(m));
+    if(m>1.41421356237f) { m*=0.5f; exponent++; }
+    float z=(m-1)/(m+1),zz=z*z;
+    float p=fmaf(zz,1.0f/9.0f,1.0f/7.0f);
+    p=fmaf(zz,p,1.0f/5.0f);
+    p=fmaf(zz,p,1.0f/3.0f);
+    return fmaf((float)exponent,0.6931471805599453f,2*z*fmaf(zz,p,1.0f));
+}
+
+/* exp(x), x <= 0. Reduce to |r| <= ln(2)/2. Terms through r^7 leave
+ * less than 8e-9 absolute error before the exact power-of-two scaling. */
+static float feature_exp(float x)
+{
+    int n=(int)lroundf(x*1.4426950408889634f);
+    float r=fmaf(-(float)n,0.6931471805599453f,x);
+    float p=fmaf(r,1.0f/5040.0f,1.0f/720.0f);
+    p=fmaf(r,p,1.0f/120.0f);
+    p=fmaf(r,p,1.0f/24.0f);
+    p=fmaf(r,p,1.0f/6.0f);
+    p=fmaf(r,p,0.5f);
+    return ldexpf(fmaf(r,fmaf(r,p,1.0f),1.0f),n);
+}
 typedef char mic_frame_must_be_32_bytes[sizeof(tinyrt_mic_frame_t)==32 ? 1 : -1];
 
 struct tinyrt_mic_fx {
@@ -20,10 +69,10 @@ size_t tinyrt_mic_fx_size(void) { return sizeof(tinyrt_mic_fx_t); }
 void tinyrt_mic_fx_reset(tinyrt_mic_fx_t *fx)
 {
     memset(fx,0,sizeof(*fx));
-    for(unsigned i=0;i<N;i++) fx->hann[i]=0.5f-0.5f*cosf(2*PI*i/(N-1));
+    for(unsigned i=0;i<N;i++) fx->hann[i]=fmaf(-0.5f,phase_sine(4*i+(N-1),N-1),0.5f);
     for(unsigned i=0;i<N/2;i++) {
-        fx->cosine[i]=cosf(2*PI*i/N);
-        fx->sine[i]=-sinf(2*PI*i/N);
+        fx->cosine[i]=phase_sine(4*i+N,N);
+        fx->sine[i]=-phase_sine(4*i,N);
     }
 }
 
@@ -43,8 +92,8 @@ static void spectrum(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
         for(unsigned base=0;base<N;base+=size) {
             for(unsigned k=0;k<half;k++) {
                 unsigned a=base+k,b=a+half,tw=k*(N/size);
-                float re=fx->re[b]*fx->cosine[tw]-fx->im[b]*fx->sine[tw];
-                float im=fx->re[b]*fx->sine[tw]+fx->im[b]*fx->cosine[tw];
+                float re=fmaf(fx->re[b],fx->cosine[tw],-fx->im[b]*fx->sine[tw]);
+                float im=fmaf(fx->re[b],fx->sine[tw],fx->im[b]*fx->cosine[tw]);
                 fx->re[b]=fx->re[a]-re; fx->im[b]=fx->im[a]-im;
                 fx->re[a]+=re; fx->im[a]+=im;
             }
@@ -53,15 +102,15 @@ static void spectrum(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
     float bands[4]={0},total=0,log_sum=0;
     unsigned count=0;
     for(unsigned k=2;k<=240;k++) { /* bin centers 62.5..7500 Hz */
-        float power=fx->re[k]*fx->re[k]+fx->im[k]*fx->im[k];
+        float power=fmaf(fx->re[k],fx->re[k],fx->im[k]*fx->im[k]);
         bands[k<16?0:k<64?1:k<128?2:3]+=power;
         total+=power;
-        log_sum+=logf(fmaxf(power,1e-20f));
+        log_sum+=feature_log(fmaxf(power,1e-20f));
         count++;
     }
     if(total<=0) return;
     for(unsigned i=0;i<4;i++) out->band_q15[i]=(uint16_t)lroundf(bands[i]/total*32768);
-    float flatness=expf(log_sum/count)/(total/count);
+    float flatness=feature_exp(log_sum/count-feature_log(total/count));
     out->flatness_q15=(uint16_t)lroundf(fminf(flatness,1)*32767);
 }
 
@@ -76,7 +125,7 @@ static void pitch(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
         float d=0;
         for(unsigned i=0;i<N-TINYRT_MIC_YIN_MAX;i++) {
             float delta=fx->window[i]-fx->window[i+lag];
-            d+=delta*delta;
+            d=fmaf(delta,delta,d);
         }
         sum+=d;
         fx->yin[lag]=sum>0 ? d*lag/sum : 1;
@@ -89,7 +138,7 @@ static void pitch(tinyrt_mic_fx_t *fx,tinyrt_mic_frame_t *out)
     float period=(float)best;
     if(best<TINYRT_MIC_YIN_MAX) {
         float left=fx->yin[best-1],mid=fx->yin[best],right=fx->yin[best+1];
-        float curvature=left-2*mid+right;
+        float curvature=fmaf(-2,mid,left)+right;
         if(curvature>0) period+=0.5f*(left-right)/curvature;
     }
     period=fmaxf(TINYRT_MIC_YIN_MIN,fminf(period,TINYRT_MIC_YIN_MAX));
@@ -130,17 +179,17 @@ void tinyrt_mic_fx_push(tinyrt_mic_fx_t *fx,const int16_t pcm[TINYRT_MIC_HOP],
     float sum=0,peak=0;
     for(unsigned i=0;i<hop;i++) {
         int sample=pcm[i];
-        float y=sample-fx->previous_in+TINYRT_MIC_DC_POLE*fx->previous_out;
+        float y=fmaf(TINYRT_MIC_DC_POLE,fx->previous_out,sample-fx->previous_in);
         fx->previous_out=y; fx->previous_in=(float)sample;
         fx->window[N-hop+i]=y;
-        sum+=y*y; peak=fmaxf(peak,fabsf(y));
+        sum=fmaf(y,y,sum); peak=fmaxf(peak,fabsf(y));
         if(sample>=TINYRT_MIC_CLIP || sample<=-TINYRT_MIC_CLIP) out->flags|=TINYRT_MICF_CLIPPED;
         int sign=y>=TINYRT_MIC_ZCR_GATE?1:y<=-TINYRT_MIC_ZCR_GATE?-1:fx->sign;
         if(fx->sign && sign!=fx->sign) out->zcr++;
         fx->sign=sign;
     }
     out->peak=(uint16_t)lroundf(fminf(32767,peak));
-    float db=sum>0 ? 10*log10f(sum/(hop*32768.0f*32768.0f)) : TINYRT_MIC_MIN_DB;
+    float db=4.342944819032518f*feature_log(fmaxf(1e-10f,sum/(hop*32768.0f*32768.0f)));
     out->rms_db_q8=(int16_t)lroundf(fmaxf(TINYRT_MIC_MIN_DB,db)*256);
     out->floor_db_q8=floor_db(fx,out->rms_db_q8,out->flags);
     /* Floor convergence is a quality flag, not an ADC transient: its own

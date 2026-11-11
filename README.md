@@ -41,7 +41,9 @@ time zero). A missing `--mic` makes `mic_open` return -2. Use `advance` to
 deliver samples and subscribed level events, or `mic_level peak rms flags`
 for explicit level input. `tinyrt-mic-features input.wav output.csv` runs the
 firmware's feature extractor on each complete 160-sample frame. The CSV's
-integer columns use the units in `tinyrt_mic_frame_t` without rescaling.
+integer columns use the units in `tinyrt_mic_frame_t` without rescaling. Both tools read
+EEDB playback, settling and overrun sample intervals from the adjacent JSON sidecar.
+CSV timestamps use its capture start time. The runner uses virtual time.
 
 ## Repository boundaries
 

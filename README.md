@@ -5,7 +5,7 @@ Magie S31 开启 `CONFIG_TINYRT_REQUIRE_AOT`，安装和启动均要求兼容的
 TinyRT validates application packages, commits installations atomically,
 and executes bounded Wasm guests behind ABI 1. This repository contains the
 portable runtime, contracts and core tests. SDK authoring tools/examples and
-EEBadge board, BLE, UI and NVS adapters belong to their own repositories.
+Magie board, BLE, UI and NVS adapters belong to their own repositories.
 
 ## Build and test on Windows
 
@@ -51,8 +51,8 @@ CSV timestamps use its capture start time. The runner uses virtual time.
 copies from these contracts. `runtime/` owns package/store/manager/Wasm behavior;
 `protocol/` owns portable management framing; `specs/` documents wire formats.
 Core tests use independent package encoders and frozen C/Wasm regression guests,
-so building this checkout does not require the SDK, EEBadge or ESP-IDF.
-Product-side tests live in EEBadge `esp32/tests/host`.
+so building this checkout does not require the SDK, Magie or ESP-IDF.
+Product-side tests live in Magie `esp32/tests/host`.
 
 ## Optional round-screen drawing and normal stop
 

@@ -14,15 +14,7 @@
 /tests/package/fixtures/
 /tests/runtime/fixtures/
 
-# AI 会话产物与本地验证记录不进仓库
-CLAUDE.md
-/.claude/
-/.codex/
-/.superpowers/
-/docs/plans/
-/docs/reports/
-/docs/superpowers/
+# 本地验证记录不进仓库
 /tmp/
 **/VALIDATION*.md
 **/HARDWARE_TEST*.md
-AGENTS.md

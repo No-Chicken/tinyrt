@@ -19,6 +19,30 @@ def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def normalize_diagnostic_path(binary: Path, source_root: Path) -> list[dict]:
+    """Normalize the Windows compiler's diagnostic path without moving data."""
+    # Other platforms may sign linked executables, so leave their bytes intact.
+    if os.name != 'nt':
+        return []
+    source = (source_root.resolve() / 'core/iwasm/aot/aot_intrinsic.c')
+    candidates = {str(source).encode(), source.as_posix().encode(), str(source).replace('/', '\\').encode()}
+    raw = binary.read_bytes()
+    matches = [(raw.find(value + b'\0'), value) for value in candidates if value + b'\0' in raw]
+    if not matches:
+        return []
+    if len(matches) != 1 or raw.count(matches[0][1] + b'\0') != 1:
+        raise ValueError('ambiguous compiler diagnostic source path')
+    offset, original = matches[0]
+    replacement = b'wamr/core/iwasm/aot/aot_intrinsic.c'
+    if len(original) < len(replacement):
+        raise ValueError('compiler diagnostic source path is too short')
+    normalized = raw[:offset] + replacement.ljust(len(original), b'\0') + raw[offset + len(original):]
+    binary.write_bytes(normalized)
+    return [dict(operation='normalize-source-diagnostic-path', offset=offset, length=len(original),
+                 replacement=replacement.decode(), input_sha256=hashlib.sha256(raw).hexdigest(),
+                 output_sha256=hashlib.sha256(normalized).hexdigest(), script_sha256=digest(Path(__file__)))]
+
+
 def collect_licenses(wamr: Path, llvm: Path, output: Path) -> list[dict]:
     """Preserve upstream license files and original source copyright headers.
 
@@ -205,12 +229,13 @@ def main() -> None:
     invoke(["cmake", "--build", str(wamrc_build), "--parallel", str(args.jobs)],
            log=work / "build-wamrc.log")
     binary = wamrc_build / ("wamrc.exe" if os.name=="nt" else "wamrc")
+    postprocess = normalize_diagnostic_path(binary, wamr)
     cc = "cl" if os.name=="nt" else os.environ.get("CC","cc")
     compiler = subprocess.run([cc] if os.name=="nt" else [cc,"--version"], capture_output=True, encoding="utf-8", errors="replace")
     # The lock is text; hash it with LF line endings so CRLF checkouts match the SDK pin.
     lock_sha = hashlib.sha256(lock_path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
     manifest = {"schema": 1, "source_lock_sha256": lock_sha,
-        "build_script_sha256": digest(Path(__file__)),
+        "build_script_sha256": digest(Path(__file__)), "postprocess": postprocess,
         "sources": {"wamr": lock["wamr"], "llvm": lock["llvm"]},
         "patches": [{"name": name, "sha256": digest(path)}
                     for name, path in zip(lock["patches"], patches)],
